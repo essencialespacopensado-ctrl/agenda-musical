@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.04';
+const APP_VERSION = '2026-10-11.05';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -980,7 +980,7 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
     if (isChurchPending(ev)) {
       const g2 = st.grupos[ev.ownerId];
       const c = conflictsFor(st, (g2?.members || []), ev.date, ev.period, ev.id);
-      if (c.length && !confirm('Atenção: ' + [...new Set(c.map(x => cantorName(st, x.login)))].join(', ') + ' já tem outro compromisso nesse período. Confirmar mesmo assim?')) return;
+      if (c.length) { alert('Não dá pra confirmar: ' + [...new Set(c.map(x => x.login === me ? 'você' : cantorName(st, x.login)))].join(', ') + ' já tem compromisso nesse dia e período. Recuse o pedido ou combine outra data com a igreja.'); return; }
     }
     await Store.update('eventos', ev.id, { status:'confirmado', confirmedBy: me, confirmedAt: Date.now() });
     Store.log('confirmacao', cantorName(st, me), ownerName(st, ev) + ' ' + fmtDate(ev.date));
@@ -1066,6 +1066,9 @@ function EventForm({ me, init, onClose }) {
   const save = async (excluded) => {
     setErr('');
     if (!date) return setErr('Escolha a data.');
+    // Trava final: com os substitutos já descontados, ninguém pode ficar com dois compromissos no mesmo período.
+    const still = conflictsFor(st, who.filter(l => !(excluded || []).includes(l)), date, period, editing?.id);
+    if (still.length) { setAsk(null); return setErr('Essa data e período já estão ocupados. Escolha outra data ou outro período.'); }
     const base = editing || { id: uid('ev'), createdBy: me, createdAt: Date.now() };
     const ev = {
       ...base,
@@ -1082,6 +1085,7 @@ function EventForm({ me, init, onClose }) {
     onClose();
   };
   const trySave = () => { if (conflicts.length) setAsk(true); else save(); };
+  const blocked = conflicts.length > 0;
   const conflictLogins = [...new Set(conflicts.map(c => c.login))];
 
   return html`<${Sheet} title=${editing ? 'Editar compromisso' : isBlock ? 'Bloquear dia' : 'Nova apresentação'} onClose=${onClose}>
@@ -1099,8 +1103,8 @@ function EventForm({ me, init, onClose }) {
       <div class="seg">${PERIODOS.map(p => html`<button key=${p.id} class=${period===p.id?'on':''} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}</button>`)}</div>
       ${!isBlock && html`<input class="inp" type="time" value=${time} onInput=${e => setTime(e.target.value)} />`}
 
-      ${conflicts.length ? html`<div class="warnbox">
-        <b>⚠️ Conflito nessa data:</b>
+      ${conflicts.length ? html`<div class="err">
+        <b>⛔ Data ocupada nesse período — não dá pra agendar:</b>
         ${conflicts.map((c,i) => html`<div key=${i}>• ${c.login === me ? 'Você' : cantorName(st, c.login)} — ${privateDesc(st, c.ev, me)}</div>`)}
       </div>` : date ? html`<div class="okbox">✅ ${g && !isBlock ? 'Todos os integrantes estão livres' : 'Você está livre'} nesse período.</div>` : null}
 
@@ -1114,14 +1118,14 @@ function EventForm({ me, init, onClose }) {
 
       ${affected.length > 0 && html`<div class="dim">🔔 Essa data vai ficar <b style=${{color:'#fca5a5'}}>indisponível</b> automaticamente em: ${affected.map(a => a.g.name).join(', ')}.</div>`}
 
-      <button class="btn" onClick=${trySave}>${editing ? 'Salvar alterações' : isBlock ? 'Bloquear dia' : 'Agendar'}</button>
+      <button class="btn" style=${blocked ? {background:'#475569'} : null} onClick=${trySave}>${blocked ? '⛔ Data ocupada — ver opções' : editing ? 'Salvar alterações' : isBlock ? 'Bloquear dia' : 'Agendar'}</button>
     </div>
-    ${ask && html`<${Sheet} title="Tem conflito" onClose=${() => setAsk(null)}>
+    ${ask && html`<${Sheet} title="⛔ Data ocupada" onClose=${() => setAsk(null)}>
       <div style=${{display:'grid', gap:'10px'}}>
         <div class="warnbox">${conflictLogins.map(l => l === me ? 'Você' : cantorName(st, l)).join(', ')} já ${conflictLogins.length > 1 ? 'têm' : 'tem'} compromisso nesse período.</div>
-        <button class="btn2" onClick=${() => setAsk(null)}>📅 Escolher outra data</button>
+        <div class="dim">Ninguém pode ter dois compromissos no mesmo dia e período.</div>
+        <button class="btn2" onClick=${() => setAsk(null)}>📅 Escolher outra data ou período</button>
         ${g && !isBlock && conflictLogins.length < (g.members||[]).length && html`<button class="btn2" onClick=${() => save(conflictLogins)}>🔁 Agendar com substituto (sem ${conflictLogins.map(l => cantorName(st, l)).join(', ')})</button>`}
-        <button class="btn2 btn-red" onClick=${() => save()}>Agendar mesmo assim</button>
       </div>
     </${Sheet}>`}
   </${Sheet}>`;
