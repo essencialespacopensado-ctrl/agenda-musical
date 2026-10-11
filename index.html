@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.03';
+const APP_VERSION = '2026-10-11.04';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -236,7 +236,7 @@ const soloLink = (login) => location.origin + location.pathname + '?solo=' + enc
 function soloTarget(st, login) {
   const c = st.cantores[login];
   if (!c || c.removed || c.paused) return null;
-  return { id: login, __solo: true, name: c.name, color: SOLO_COLOR, tipo: 'Solo', members: [login], cost: c.cost };
+  return { id: login, __solo: true, name: c.name, color: SOLO_COLOR, tipo: 'Solo', members: [login], cost: c.cost, logo: c.photo };
 }
 async function copyText(text, okMsg) {
   try { await navigator.clipboard.writeText(text); toast(okMsg); } catch(e) { prompt('Copie o link:', text); }
@@ -509,10 +509,53 @@ function Brand({ sub }) {
     </div>`;
 }
 
-function Avatar({ name, color, size }) {
+function Avatar({ name, color, size, img }) {
   const s = size || 36;
+  if (img) return html`<img class="avatar" src=${img} alt="" style=${{width:s+'px', height:s+'px', objectFit:'cover', background:'#111827'}} />`;
   return html`<div class="avatar" style=${{width:s+'px', height:s+'px', fontSize:(s*0.38)+'px', background: color || 'linear-gradient(135deg,var(--accent-1),var(--accent-2))'}}>${initials(name)}</div>`;
 }
+
+// Foto/logo: reduz pra 320px e JPEG leve (~20-40 KB), pra caber no banco sem pesar o app.
+function fileToLogo(file, max) {
+  max = max || 320;
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = reject;
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        const x = c.getContext('2d'); x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height);
+        x.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function PhotoPicker({ value, onChange, label, name, color }) {
+  const ref = useRef();
+  const pick = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { onChange(await fileToLogo(f)); } catch(err) { toast('Não consegui abrir essa imagem'); }
+    e.target.value = '';
+  };
+  return html`<div class="row" style=${{gap:'12px'}}>
+    <${Avatar} name=${name || '?'} color=${color} img=${value} size=${64} />
+    <div style=${{display:'grid', gap:'6px', flex:1}}>
+      <button type="button" class="btn2" onClick=${() => ref.current.click()}>📷 ${value ? 'Trocar' : 'Colocar'} ${label || 'foto'}</button>
+      ${value && html`<button type="button" class="btn2 btn-red" onClick=${() => onChange('')}>Remover</button>`}
+    </div>
+    <input ref=${ref} type="file" accept="image/*" style=${{display:'none'}} onChange=${pick} />
+  </div>`;
+}
+// Privacidade: só mostra detalhes de um compromisso pra quem participa dele.
+const canSeeEv = (st, ev, me) => !!me && participantsOf(st, ev).includes(me);
+const privateDesc = (st, ev, me) => canSeeEv(st, ev, me) ? describeEv(st, ev) : 'outro compromisso · ' + (PER[ev.period] || PER.dia).label;
 
 function PasswordInput({ value, onChange, placeholder }) {
   const [show, setShow] = useState(false);
@@ -540,17 +583,18 @@ function LoginScreen({ onLogin }) {
 
   const doLogin = (e) => {
     e.preventDefault(); setErr('');
-    if (who === '__dev__') {
-      if (devUser.trim().toLowerCase() === DEV.login && pass === DEV.password) { onLogin({ dev:true }, remember); return; }
-      setErr('Usuário ou senha do desenvolvedor incorretos.'); return;
+    const u = normLogin(who);
+    if (!u) { setErr('Digite seu usuário.'); return; }
+    if (u === DEV.login) {
+      if (pass === DEV.password) { onLogin({ dev:true }, remember); return; }
+      setErr('Usuário ou senha incorretos.'); return;
     }
-    if (!who) { setErr('Escolha seu nome na lista.'); return; }
-    const c = st.cantores[who];
-    if (!c || c.removed) { setErr('Cadastro não encontrado.'); return; }
-    if (c.passHash !== simpleHash(pass)) { setErr('Senha incorreta.'); return; }
+    // Aceita o usuário ou o nome completo digitado.
+    const c = st.cantores[u] || activeCantores(st).find(x => normLogin(x.name) === u);
+    if (!c || c.removed || c.passHash !== simpleHash(pass)) { setErr('Usuário ou senha incorretos.'); return; }
     if (c.paused) { setErr('Seu acesso está pausado. Fale com o Paulo.'); return; }
     Store.log('login', c.name);
-    onLogin({ login: who }, remember);
+    onLogin({ login: c.id }, remember);
   };
 
   const doRegister = async (e) => {
@@ -586,12 +630,7 @@ function LoginScreen({ onLogin }) {
           ${err && html`<div class="err">${err}</div>`}
           ${mode === 'login' ? html`
             <form onSubmit=${doLogin} style=${{display:'grid', gap:'10px'}}>
-              <select class="inp" value=${who} onChange=${e => setWho(e.target.value)}>
-                <option value="">Quem é você?</option>
-                ${cantores.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
-                <option value="__dev__">🔑 Acesso do Desenvolvedor</option>
-              </select>
-              ${who === '__dev__' && html`<input class="inp" placeholder="Usuário do desenvolvedor" value=${devUser} onInput=${e => setDevUser(e.target.value)} />`}
+              <input class="inp" placeholder="Seu usuário" autocapitalize="off" autocomplete="username" value=${who} onInput=${e => setWho(e.target.value)} />
               <${PasswordInput} value=${pass} onChange=${setPass} />
               <label class="row muted" style=${{gap:'8px'}}>
                 <input type="checkbox" checked=${remember} onChange=${e => setRemember(e.target.checked)} style=${{width:'18px', height:'18px'}} />
@@ -599,7 +638,7 @@ function LoginScreen({ onLogin }) {
               </label>
               <button class="btn" type="submit">Entrar</button>
               <button class="link" type="button" onClick=${() => setForgot(true)}>Esqueci minha senha</button>
-              <div class="dim" style=${{textAlign:'center'}}>Seu nome não está na lista? Toque em <b>Criar conta</b>.</div>
+              <div class="dim" style=${{textAlign:'center'}}>Ainda não tem conta? Toque em <b>Criar conta</b>. O desenvolvedor entra com o usuário dele.</div>
             </form>
           ` : html`
             <form onSubmit=${doRegister} style=${{display:'grid', gap:'10px'}}>
@@ -618,7 +657,7 @@ function LoginScreen({ onLogin }) {
         </div>
         <div class="dim" style=${{textAlign:'center', marginTop:'14px'}}>v${APP_VERSION}</div>
       </div>
-      ${forgot && html`<${ForgotSheet} onClose=${() => setForgot(false)} preset=${who && who !== '__dev__' ? who : ''} />`}
+      ${forgot && html`<${ForgotSheet} onClose=${() => setForgot(false)} preset=${who} />`}
     </div>`;
 }
 
@@ -629,11 +668,11 @@ function ForgotSheet({ onClose, preset }) {
   const [np, setNp] = useState('');
   const [err, setErr] = useState('');
   const [ok, setOk] = useState(false);
-  const c = st.cantores[who];
-  const cantores = activeCantores(st).sort((x,y) => x.name.localeCompare(y.name,'pt-BR'));
+  const u = normLogin(who);
+  const c = (st.cantores[u] && !st.cantores[u].removed) ? st.cantores[u] : null;
   const go = async () => {
     setErr('');
-    if (!c) return setErr('Escolha seu nome.');
+    if (!c) return setErr('Usuário não encontrado.');
     if (simpleHash(a.trim().toLowerCase()) !== c.aHash) return setErr('Resposta não confere.');
     if (np.length < 4) return setErr('A nova senha precisa ter pelo menos 4 caracteres.');
     await Store.update('cantores', c.id, { passHash: simpleHash(np) });
@@ -645,10 +684,8 @@ function ForgotSheet({ onClose, preset }) {
       <button class="btn" style=${{marginTop:'12px'}} onClick=${onClose}>Voltar pro login</button>` : html`
     <div style=${{display:'grid', gap:'10px'}}>
       ${err && html`<div class="err">${err}</div>`}
-      <select class="inp" value=${who} onChange=${e => setWho(e.target.value)}>
-        <option value="">Quem é você?</option>
-        ${cantores.map(x => html`<option key=${x.id} value=${x.id}>${x.name}</option>`)}
-      </select>
+      <input class="inp" placeholder="Seu usuário" autocapitalize="off" value=${who} onInput=${e => setWho(e.target.value)} />
+      ${who.trim() && !c && html`<div class="dim">Digite o usuário exatamente como cadastrou.</div>`}
       ${c && html`
         <div class="muted"><b>Pergunta:</b> ${c.q}</div>
         <input class="inp" placeholder="Sua resposta" value=${a} onInput=${e => setA(e.target.value)} />
@@ -742,6 +779,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
 
   return html`
     <div class="fade-up" style=${{display:'grid', gap:'12px'}}>
+      ${showChips && ctx.type === 'pessoa' && ctx.login === me && html`<${AgendaBanner} me=${me} onPick=${setDay} />`}
       ${showChips && html`<div class="chips">
         <button class=${'chip ' + (ctx.type==='pessoa' ? 'on' : '')} style=${ctx.type==='pessoa' ? {background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))'} : null} onClick=${() => setCtx({ type:'pessoa', login:me })}>👤 Minha agenda</button>
         ${groups.map(x => html`<button key=${x.id} class=${'chip ' + (ctx.type==='grupo' && ctx.id===x.id ? 'on' : '')} style=${ctx.type==='grupo' && ctx.id===x.id ? {background:x.color} : {borderColor:x.color+'88'}} onClick=${() => setCtx({ type:'grupo', id:x.id })}>🎤 ${x.name}</button>`)}
@@ -787,7 +825,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
           <div style=${{fontSize:'20px'}}>🔴</div>
           <div style=${{flex:1}}>
             <div style=${{fontWeight:700}}>${fmtDateLong(e.date)} · ${PER[e.period]?.label}</div>
-            <div class="dim">${who.map(w => cantorName(st, w)).join(', ')} — ${ownerName(st, e)}</div>
+            <div class="dim">${who.map(w => cantorName(st, w)).join(', ')} — ${canSeeEv(st, e, me) ? ownerName(st, e) : 'outro compromisso'}</div>
           </div>
         </button>`)}</div>
       </div>`}
@@ -797,6 +835,71 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
           onEdit=${(ev) => { setDay(null); setForm({ ev, ctx }); }} />`}
       ${form && html`<${EventForm} me=${me} init=${form} onClose=${() => setForm(null)} />`}
     </div>`;
+}
+
+// Banner que aparece logo que a pessoa entra: próximos compromissos + pedidos esperando.
+function AgendaBanner({ me, onPick }) {
+  const st = useStore();
+  const today = todayStr();
+  const mine = eventsOfPerson(st, me).filter(e => e.date >= today).sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
+  const next = mine.filter(e => e.kind !== 'bloqueio').slice(0, 3);
+  const groups = myGroups(st, me).map(g => g.id);
+  const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && groups.includes(e.ownerId)) || (e.ownerType === 'solo' && e.ownerId === me)));
+  const ym = today.slice(0, 7);
+  const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && e.date.startsWith(ym)).length;
+  const first = (cantorName(st, me) || '').split(' ')[0];
+  const label = (e) => e.ownerType === 'grupo' ? ownerName(st, e) : '🎙️ Solo';
+  return html`<div class="card" style=${{borderRadius:'18px', padding:'16px', background:'linear-gradient(135deg, rgba(236,72,153,.28), rgba(139,92,246,.28) 55%, rgba(6,182,212,.2))', border:'1px solid rgba(255,255,255,.12)', display:'grid', gap:'10px'}}>
+    <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
+      <div>
+        <div style=${{fontWeight:900, fontSize:'18px'}}>Olá, ${first}! 👋</div>
+        <div class="muted">${next.length ? 'Sua agenda dos próximos dias:' : 'Nenhuma apresentação marcada por enquanto.'}</div>
+      </div>
+      <div style=${{textAlign:'right'}}>
+        <div style=${{fontWeight:900, fontSize:'22px'}}>${thisMonth}</div>
+        <div class="dim" style=${{fontSize:'11px'}}>este mês</div>
+      </div>
+    </div>
+    ${next.map(e => { const d = parseYmd(e.date); return html`<button key=${e.id} onClick=${() => onPick(e.date)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'9px 10px', borderRadius:'12px', border:'none', background:'rgba(2,6,23,.35)', color:'var(--text-hi)'}}>
+      <div style=${{minWidth:'42px', textAlign:'center'}}><div style=${{fontWeight:900, fontSize:'18px', lineHeight:1}}>${d.getDate()}</div><div class="dim" style=${{fontSize:'11px'}}>${DOW_LONG[d.getDay()].slice(0,3)}</div></div>
+      <div style=${{flex:1, minWidth:0}}>
+        <div style=${{fontWeight:800}}>${label(e)}${e.status === 'pendente' ? html` <span style=${{color:'var(--maybe)', fontSize:'12px'}}>· a confirmar</span>` : ''}</div>
+        <div class="dim" style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).ic} ${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${e.place ? ' · ' + e.place : ''}</div>
+      </div>
+    </button>`; })}
+    ${pend.length > 0 && html`<div class="warnbox" style=${{padding:'8px 10px'}}>⛪ ${pend.length} pedido${pend.length > 1 ? 's' : ''} de igreja esperando confirmação — veja em 🔔 Avisos.</div>`}
+  </div>`;
+}
+
+// Aviso de versão nova: confere a cada 3 min (e quando o app volta pra frente) se o
+// arquivo publicado tem outro número de versão. Se tiver, mostra a faixa "Atualizar".
+function UpdateBanner() {
+  const [nv, setNv] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    const check = async () => {
+      try {
+        const r = await fetch(location.pathname + '?vcheck=' + Date.now(), { cache:'no-store' });
+        const t = await r.text();
+        const m = t.match(/APP_VERSION = '([^']+)'/);
+        if (!stop && m && m[1] !== APP_VERSION) setNv(m[1]);
+      } catch(e) {}
+    };
+    check();
+    const iv = setInterval(check, 3 * 60 * 1000);
+    const vis = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', vis);
+    return () => { stop = true; clearInterval(iv); document.removeEventListener('visibilitychange', vis); };
+  }, []);
+  if (!nv) return null;
+  const go = async () => {
+    try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch(e) {}
+    location.reload();
+  };
+  return html`<div style=${{position:'fixed', top:'calc(env(safe-area-inset-top) + 8px)', left:'12px', right:'12px', margin:'0 auto', maxWidth:'520px', zIndex:70, padding:'10px 12px', borderRadius:'14px', background:'linear-gradient(135deg,#ec4899,#8b5cf6)', color:'#fff', boxShadow:'0 12px 30px -10px #000', display:'flex', alignItems:'center', gap:'10px'}}>
+    <div style=${{flex:1, fontWeight:800, fontSize:'14px'}}>🆕 Nova versão do app disponível</div>
+    <button onClick=${go} style=${{border:'none', borderRadius:'10px', padding:'8px 12px', fontWeight:800, background:'#fff', color:'#7c3aed'}}>Atualizar</button>
+  </div>`;
 }
 
 function EventRow({ ev, onClick }) {
@@ -918,7 +1021,7 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
       })}
       ${busy.length > 0 && html`<div class="err">
         <div style=${{fontWeight:800, marginBottom:'4px'}}>🔴 Integrante ocupado nesse dia</div>
-        ${busy.map((b,i) => html`<div key=${i}>• <b>${cantorName(st, b.login)}</b> — ${describeEv(st, b.ev)}</div>`)}
+        ${busy.map((b,i) => html`<div key=${i}>• <b>${cantorName(st, b.login)}</b> — ${privateDesc(st, b.ev, me)}</div>`)}
       </div>`}
       ${!readOnly && html`<div class="row" style=${{marginTop:'4px'}}>
         <button class="btn" onClick=${() => onNew({})}>➕ Agendar neste dia</button>
@@ -998,7 +1101,7 @@ function EventForm({ me, init, onClose }) {
 
       ${conflicts.length ? html`<div class="warnbox">
         <b>⚠️ Conflito nessa data:</b>
-        ${conflicts.map((c,i) => html`<div key=${i}>• ${c.login === me ? 'Você' : cantorName(st, c.login)} — ${describeEv(st, c.ev)}</div>`)}
+        ${conflicts.map((c,i) => html`<div key=${i}>• ${c.login === me ? 'Você' : cantorName(st, c.login)} — ${privateDesc(st, c.ev, me)}</div>`)}
       </div>` : date ? html`<div class="okbox">✅ ${g && !isBlock ? 'Todos os integrantes estão livres' : 'Você está livre'} nesse período.</div>` : null}
 
       <div class="lbl">${isBlock ? 'Motivo (só você vê o detalhe)' : 'Onde'}</div>
@@ -1056,7 +1159,7 @@ function GroupsView({ me, openAgenda }) {
     ${groups.length === 0 && html`<div class="glass card muted">Você ainda não está em nenhum grupo. Crie um ou peça pra alguém do grupo te adicionar.</div>`}
     <div class="list">
       ${groups.map(g => { const n = nextOf(g); return html`<button key=${g.id} class="item" style=${{borderLeft:'5px solid ' + g.color}} onClick=${() => setOpen(g.id)}>
-        <${Avatar} name=${g.name} color=${g.color} size=${42} />
+        <${Avatar} name=${g.name} color=${g.color} img=${g.logo} size=${42} />
         <div style=${{flex:1, minWidth:0}}>
           <div style=${{fontWeight:800, fontSize:'15.5px'}}>${g.name}</div>
           <div class="dim">${g.tipo} · ${(g.members||[]).map(m => cantorName(st, m).split(' ')[0]).join(', ')}</div>
@@ -1075,13 +1178,14 @@ function GroupForm({ me, g, onClose }) {
   const [name, setName] = useState(g?.name || '');
   const [tipo, setTipo] = useState(g?.tipo || 'Quarteto');
   const [color, setColor] = useState(g?.color || CORES[activeGrupos(st).length % CORES.length]);
+  const [logo, setLogo] = useState(g?.logo || '');
   const [err, setErr] = useState('');
   const save = async () => {
     if (!name.trim()) return setErr('Dê um nome pro grupo.');
-    if (g) { await Store.update('grupos', g.id, { name: name.trim(), tipo, color }); toast('Grupo atualizado'); }
+    if (g) { await Store.update('grupos', g.id, { name: name.trim(), tipo, color, logo }); toast('Grupo atualizado'); }
     else {
       const id = uid('gr');
-      await Store.set('grupos', id, { name: name.trim(), tipo, color, members:[me], leader: me, createdBy: me, createdAt: Date.now(), removed:false });
+      await Store.set('grupos', id, { name: name.trim(), tipo, color, logo, members:[me], leader: me, createdBy: me, createdAt: Date.now(), removed:false });
       Store.log('grupo', cantorName(st, me), 'criou ' + name.trim());
       toast('Grupo criado! Agora adicione os integrantes 🎤');
     }
@@ -1093,6 +1197,8 @@ function GroupForm({ me, g, onClose }) {
       <input class="inp" placeholder="Nome do grupo" value=${name} onInput=${e => setName(e.target.value)} autoFocus />
       <div class="lbl">Tipo</div>
       <div class="chips" style=${{flexWrap:'wrap'}}>${TIPOS.map(t => html`<button key=${t} class=${'chip ' + (tipo===t?'on':'')} style=${tipo===t ? {background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))'} : null} onClick=${() => setTipo(t)}>${t}</button>`)}</div>
+      <div class="lbl">Foto ou logo do grupo</div>
+      <${PhotoPicker} value=${logo} onChange=${setLogo} label="logo" name=${name || 'Grupo'} color=${color} />
       <div class="lbl">Cor na agenda</div>
       <div class="row" style=${{flexWrap:'wrap', gap:'8px'}}>${CORES.map(c => html`<button key=${c} onClick=${() => setColor(c)} style=${{width:'36px', height:'36px', borderRadius:'50%', background:c, border: color===c ? '3px solid #fff' : '3px solid transparent'}}></button>`)}</div>
       <button class="btn" onClick=${save}>${g ? 'Salvar' : 'Criar grupo'}</button>
@@ -1108,7 +1214,8 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
   const [costs, setCosts] = useState(false);
   const copyLink = () => copyText(bookingLink(g.id), 'Link do grupo copiado! Mande pras igrejas 🔗');
   const members = (g.members||[]);
-  const candidates = activeCantores(st).filter(c => !members.includes(c.id) && (!q || c.name.toLowerCase().includes(q.toLowerCase()))).sort((a,b) => a.name.localeCompare(b.name,'pt-BR'));
+  const ql = q.trim().toLowerCase();
+  const candidates = ql.length < 2 ? [] : activeCantores(st).filter(c => !members.includes(c.id) && (c.name.toLowerCase().includes(ql) || c.id.includes(normLogin(ql)))).sort((a,b) => a.name.localeCompare(b.name,'pt-BR')).slice(0, 15);
   const add = async (login) => { await Store.update('grupos', g.id, { members: [...members, login] }); toast(cantorName(st, login) + ' entrou no grupo'); Store.log('integrante', cantorName(st, me), cantorName(st, login) + ' → ' + g.name); };
   const removeM = async (login) => {
     const self = login === me;
@@ -1152,12 +1259,12 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
         ${(isLeader || m === me) && html`<button class="btn2 btn-red" style=${{padding:'8px 10px'}} onClick=${() => removeM(m)}>${m === me ? 'Sair' : '✕'}</button>`}
       </div>`; })}</div>
       ${adding ? html`<div style=${{display:'grid', gap:'8px'}}>
-        <input class="inp" placeholder="Buscar cantor pelo nome…" value=${q} onInput=${e => setQ(e.target.value)} autoFocus />
+        <input class="inp" placeholder="Nome ou usuário do cantor…" value=${q} onInput=${e => setQ(e.target.value)} autoFocus />
         <div class="list" style=${{maxHeight:'40vh', overflowY:'auto'}}>
           ${candidates.map(c => html`<button key=${c.id} class="item" onClick=${() => add(c.id)}>
             <${Avatar} name=${c.name} size=${30} /><div style=${{flex:1, fontWeight:700}}>${c.name}</div><div style=${{color:'var(--ok)', fontWeight:800}}>＋</div>
           </button>`)}
-          ${candidates.length === 0 && html`<div class="dim">Ninguém encontrado. A pessoa precisa criar a conta dela no app primeiro.</div>`}
+          ${ql.length < 2 ? html`<div class="dim">Digite pelo menos 2 letras do nome ou o usuário da pessoa.</div>` : candidates.length === 0 && html`<div class="dim">Ninguém encontrado. A pessoa precisa criar a conta dela no app primeiro.</div>`}
         </div>
         <button class="btn2" onClick=${() => { setAdding(false); setQ(''); }}>Pronto</button>
       </div>` : html`<button class="btn2 btn-green" onClick=${() => setAdding(true)}>➕ Adicionar integrante</button>`}
@@ -1262,7 +1369,7 @@ function AllView({ me }) {
     </div>
     <div class="list">
       ${tab === 'grupos' ? grupos.map(g => html`<button key=${g.id} class="item" style=${{borderLeft:'5px solid '+g.color}} onClick=${() => setView({ type:'grupo', id:g.id })}>
-          <${Avatar} name=${g.name} color=${g.color} />
+          <${Avatar} name=${g.name} color=${g.color} img=${g.logo} />
           <div style=${{flex:1}}><div style=${{fontWeight:800}}>${g.name}</div><div class="dim">${g.tipo} · ${(g.members||[]).map(m => cantorName(st, m).split(' ')[0]).join(', ')}</div></div>
           <div style=${{color:'var(--text-dim)'}}>›</div>
         </button>`)
@@ -1328,7 +1435,9 @@ function ProfileView({ me, onLogout, installPrompt }) {
   }, [name, phone]);
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
     <div class="glass card" style=${{display:'grid', gap:'10px'}}>
-      <div class="row"><${Avatar} name=${name} size=${52} /><div><div style=${{fontWeight:800, fontSize:'17px'}}>${name}</div><div class="dim">@${me}</div></div></div>
+      <div class="row"><${Avatar} name=${name} img=${c.photo} size=${52} /><div><div style=${{fontWeight:800, fontSize:'17px'}}>${name}</div><div class="dim">Usuário: <b>${me}</b></div></div></div>
+      <div class="lbl">Sua foto (aparece no seu link solo)</div>
+      <${PhotoPicker} value=${c.photo || ''} onChange=${v => { Store.update('cantores', me, { photo: v }); toast(v ? 'Foto salva ✅' : 'Foto removida'); }} name=${name} />
       <div class="lbl">Nome</div>
       <input class="inp" value=${name} onInput=${e => setName(e.target.value)} />
       <div class="lbl">WhatsApp</div>
@@ -1461,7 +1570,7 @@ function PublicBooking({ gid, solo }) {
 
   return html`<div class="app">
     <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
-      <div class="avatar" style=${{width:'58px', height:'58px', fontSize:'22px', background:g.color, margin:'0 auto 8px'}}>${initials(g.name)}</div>
+      <div style=${{display:'flex', justifyContent:'center', marginBottom:'8px'}}><${Avatar} name=${g.name} color=${g.color} img=${g.logo} size=${72} /></div>
       <div style=${{fontWeight:900, fontSize:'21px'}}>${g.name}</div>
       <div class="muted">${g.__solo ? '🎙️ Apresentação solo' : g.tipo + (members ? ' · ' + members : '')}</div>
       <div class="dim" style=${{marginTop:'6px'}}>${g.__solo ? 'Escolha uma data livre para convidar ' + g.name.split(' ')[0] + ' para cantar na sua igreja.' : 'Escolha uma data livre para convidar o grupo para a sua igreja.'}</div>
@@ -1642,15 +1751,16 @@ function App() {
     setSession(null);
   }
 
-  if (!session) return html`<${LoginScreen} onLogin=${login} /><${Toast} msg=${msg} />`;
+  if (!session) return html`<${UpdateBanner} /><${LoginScreen} onLogin=${login} /><${Toast} msg=${msg} />`;
 
   const tabs = session.dev
     ? [['dev','🔑','Painel'], ['todos','🌐','Todos']]
-    : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['todos','🌐','Todos'], ['avisos','🔔','Avisos'], ['perfil','👤','Perfil']];
+    : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['avisos','🔔','Avisos'], ['perfil','👤','Perfil']];
   const title = session.dev ? 'Desenvolvedor' : (cantorName(st, me) || '').split(' ')[0];
 
   return html`
     <div class="app">
+      <${UpdateBanner} />
       <div class="topbar">
         <div class="logo">🎶</div>
         <div style=${{flex:1, minWidth:0}}>
@@ -1663,7 +1773,7 @@ function App() {
 
       ${tab === 'agenda' && html`<${AgendaView} me=${me} ctx=${ctx} setCtx=${setCtx} showChips=${true} />`}
       ${tab === 'grupos' && html`<${GroupsView} me=${me} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`}
-      ${tab === 'todos' && html`<${AllView} me=${me} />`}
+      ${tab === 'todos' && session.dev && html`<${AllView} me=${me} />`}
       ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => setAvisoDay(a)} />`}
       ${tab === 'perfil' && html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} />`}
       ${tab === 'dev' && html`<${DevView} />`}
