@@ -93,8 +93,8 @@
   .day:hover { transform:translateY(-1px); box-shadow:0 0 12px -3px rgba(167,139,250,.8); }
   .day.out { opacity:.22; }
   .day.past { opacity:.5; filter:saturate(.6); }
-  @keyframes todayPulse { 0%,100%{ box-shadow:0 0 0 2px #22d3ee, 0 0 12px 0 rgba(34,211,238,.7);} 50%{ box-shadow:0 0 0 2px #f472b6, 0 0 18px 2px rgba(244,114,182,.7);} }
-  .day.today { animation:todayPulse 2.6s ease-in-out infinite; border-color:transparent; }
+  .day.today::after { content:'HOJE'; position:absolute; bottom:3px; left:50%; transform:translateX(-50%); font-size:8px; font-weight:900; letter-spacing:.5px; color:#22d3ee; text-shadow:0 0 6px rgba(34,211,238,.9); }
+  .day.today { border-style:dashed; border-color:rgba(34,211,238,.7); }
   .day.st-free { background:linear-gradient(160deg,rgba(16,185,129,.28),rgba(6,95,70,.35)); border-color:rgba(52,211,153,.55); color:#d1fae5; }
   .day.st-mine { background:linear-gradient(160deg,#3b82f6,#6366f1); border-color:#93c5fd; color:#fff; box-shadow:0 0 14px -2px rgba(99,102,241,.9); }
   .day.st-maybe { background:linear-gradient(160deg,#f59e0b,#f97316); border-color:#fcd34d; color:#fff; box-shadow:0 0 14px -2px rgba(249,115,22,.9); }
@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.12';
+const APP_VERSION = '2026-10-11.13';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -987,8 +987,13 @@ async function shareAgenda(st, ctx, me) {
 function AgendaBanner({ me, onPick, gid }) {
   const st = useStore();
   const today = todayStr();
-  const mine = (gid ? allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === gid) : eventsOfPerson(st, me)).filter(e => e.date >= today).sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
-  const next = mine.filter(e => e.kind !== 'bloqueio').slice(0, 3);
+  const all = (gid ? allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === gid) : eventsOfPerson(st, me)).sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
+  const mine = all.filter(e => e.date >= today);
+  // Semana atual (domingo a sábado), dia por dia.
+  const t0 = parseYmd(today); const sun = new Date(t0.getFullYear(), t0.getMonth(), t0.getDate() - t0.getDay());
+  const week = [0,1,2,3,4,5,6].map(i => ymd(new Date(sun.getFullYear(), sun.getMonth(), sun.getDate() + i)));
+  const weekEvs = all.filter(e => e.date >= week[0] && e.date <= week[6]);
+  const next = mine.filter(e => e.kind !== 'bloqueio' && e.date > week[6]).slice(0, 2);
   const groups = myGroups(st, me).map(g => g.id);
   const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && groups.includes(e.ownerId)) || (e.ownerType === 'solo' && e.ownerId === me)));
   const ym = today.slice(0, 7);
@@ -999,13 +1004,24 @@ function AgendaBanner({ me, onPick, gid }) {
     <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
       <div>
         <div style=${{fontWeight:900, fontSize:'18px'}}>Olá, ${first}! 👋</div>
-        <div class="muted">${next.length ? 'Sua agenda dos próximos dias:' : 'Nenhuma apresentação marcada por enquanto.'}</div>
+        <div class="muted">📆 Seus compromissos desta semana</div>
       </div>
       <div style=${{textAlign:'right'}}>
         <div style=${{fontWeight:900, fontSize:'22px'}}>${thisMonth}</div>
         <div class="dim" style=${{fontSize:'11px'}}>este mês</div>
       </div>
     </div>
+    <div style=${{display:'grid', gap:'6px'}}>${week.map((d, i) => { const evs = weekEvs.filter(e => e.date === d); const isT = d === today; const past = d < today; return html`<button key=${d} onClick=${() => onPick(d)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border: isT ? '1px solid #22d3ee' : '1px solid rgba(255,255,255,.06)', background: isT ? 'linear-gradient(135deg,rgba(34,211,238,.22),rgba(139,92,246,.22))' : evs.length ? 'rgba(2,6,23,.45)' : 'rgba(2,6,23,.22)', color:'var(--text-hi)', opacity: past ? .55 : 1}}>
+      <div style=${{minWidth:'44px', textAlign:'center'}}><div style=${{fontSize:'11px', fontWeight:900, color: isT ? '#22d3ee' : (i === 0 || i === 6 ? '#f472b6' : '#a78bfa')}}>${isT ? 'HOJE' : DOW3[i].toUpperCase()}</div><div style=${{fontWeight:900, fontSize:'17px', lineHeight:1.1}}>${parseYmd(d).getDate()}</div></div>
+      <div style=${{flex:1, minWidth:0, display:'grid', gap:'3px'}}>
+        ${evs.length ? evs.map(e => html`<div key=${e.id} style=${{display:'flex', gap:'6px', alignItems:'center', minWidth:0}}>
+          <span style=${{width:'8px', height:'8px', borderRadius:'50%', background: ownerColor(st, e), boxShadow:'0 0 8px ' + ownerColor(st, e), flex:'none'}}></span>
+          <span style=${{fontWeight:800, fontSize:'13.5px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${e.kind === 'bloqueio' ? evTitle(st, e) : label(e)}</span>
+          <span class="dim" style=${{fontSize:'12px', whiteSpace:'nowrap'}}>${e.time || (PER[e.period]||PER.dia).label}${e.status === 'pendente' ? ' · a confirmar' : ''}</span>
+        </div>`) : html`<span class="dim" style=${{fontSize:'12.5px'}}>— livre</span>`}
+      </div>
+    </button>`; })}</div>
+    ${next.length > 0 && html`<div class="dim" style=${{marginTop:'2px'}}>Depois desta semana:</div>`}
     ${next.map(e => { const d = parseYmd(e.date); return html`<button key=${e.id} onClick=${() => onPick(e.date)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'9px 10px', borderRadius:'12px', border:'none', background:'rgba(2,6,23,.35)', color:'var(--text-hi)'}}>
       <div style=${{minWidth:'42px', textAlign:'center'}}><div style=${{fontWeight:900, fontSize:'18px', lineHeight:1}}>${d.getDate()}</div><div class="dim" style=${{fontSize:'11px'}}>${DOW_LONG[d.getDay()].slice(0,3)}</div></div>
       <div style=${{flex:1, minWidth:0}}>
@@ -1187,6 +1203,41 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
   </${Sheet}>`;
 }
 
+// ---------- ENSAIOS INDEFINIDOS: estende sozinho ----------
+// Séries "♾️ Indefinido" ficam sempre com ~1 ano marcado à frente. Roda quando alguém do grupo
+// (ou o dono do solo) abre o app. Os ids são fixos (série + data), então dois aparelhos rodando
+// ao mesmo tempo não duplicam nada.
+async function extendOpenSeries(st, me) {
+  const today = todayStr();
+  const t = parseYmd(today);
+  const limit = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 364));
+  const refill = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 300));
+  const bySeries = {};
+  Object.values(st.eventos).forEach(e => { if (e.seriesId && e.seriesOpen && e.status !== 'recusado') (bySeries[e.seriesId] = bySeries[e.seriesId] || []).push(e); });
+  let made = 0;
+  for (const sid of Object.keys(bySeries)) {
+    const list = bySeries[sid].sort((a,b) => a.date.localeCompare(b.date));
+    const last = list[list.length - 1];
+    if (last.date >= refill) continue;
+    const mine = last.ownerType === 'grupo' ? canManage(st, st.grupos[last.ownerId], me) : last.ownerId === me;
+    if (!mine) continue;
+    const who = last.ownerType === 'grupo' ? (st.grupos[last.ownerId]?.members || []) : [last.ownerId];
+    const every = last.seriesFreq === 'quinzenal' ? 2 : 1;
+    const ld = parseYmd(last.date);
+    const startSun = new Date(ld.getFullYear(), ld.getMonth(), ld.getDate() - ld.getDay() + 7 * every);
+    const dates = weekDates(ymd(startSun), last.seriesDias || [ld.getDay()], 60, every).filter(d => d > last.date && d <= limit);
+    for (const d of dates) {
+      if (conflictsFor(st, who, d, last.period).length) continue;
+      const id = sid + '-' + d;
+      if (st.eventos[id]) continue;
+      const { obs, ...rest } = last;
+      await Store.set('eventos', id, { ...rest, id, date: d, seriesFirst:false, extra:false, createdAt: Date.now() });
+      made++;
+    }
+  }
+  return made;
+}
+
 // ---------- RASCUNHO DO FORMULÁRIO ----------
 // Salva tudo que a pessoa está preenchendo (ex.: saiu pro YouTube buscar um kit e o celular
 // recarregou o app). Ao voltar, o formulário reabre do jeito que estava.
@@ -1359,15 +1410,16 @@ function EventForm({ me, init, onClose }) {
   const [repert, setRepert] = useState(pickD('repert', normRep(editing?.repertoire)));
   const [freq, setFreq] = useState(pickD('freq', 'nao'));
   const [count, setCount] = useState(pickD('count', 8));
-  const [dias, setDias] = useState(pickD('dias', [parseYmd(editing?.date || init.date || todayStr()).getDay()]));
+  const [dias, setDias] = useState(pickD('dias', []));
+  const [semFim, setSemFim] = useState(pickD('semFim', false));
   const [manual, setManual] = useState(pickD('manual', []));   // dias extras marcados no calendário
   const [removed, setRemoved] = useState(pickD('removed', [])); // dias da recorrência tirados no calendário
   const [extra, setExtra] = useState(pickD('extra', editing?.extra || false));
   const [calM, setCalM] = useState(() => { const d = parseYmd(editing?.date || init.date || todayStr()); return new Date(d.getFullYear(), d.getMonth(), 1); });
   useEffect(() => { if (dr) toast('📝 Rascunho recuperado — continue de onde parou'); }, []);
   useEffect(() => {
-    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, manual, removed, extra });
-  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, manual, removed, extra]);
+    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra });
+  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra]);
   const closeForm = () => { clearDraft(); onClose(); };
   const [applyNext, setApplyNext] = useState(false);
   const [ask, setAsk] = useState(null);
@@ -1377,7 +1429,7 @@ function EventForm({ me, init, onClose }) {
   const who = isBlock || !g ? [me] : (g.members||[]);
   const conflicts = conflictsFor(st, who, date, period, editing?.id);
   // Datas do ensaio: recorrência (menos os dias tirados) + dias extras marcados no calendário.
-  const baseDates = ens && !editing && date ? (freq !== 'nao' && dias.length ? weekDates(date, dias, Math.max(1, Math.min(52, Number(count) || 1)), freq === 'quinzenal' ? 2 : 1) : [date]) : [];
+  const baseDates = ens && !editing && date ? (freq !== 'nao' && dias.length ? weekDates(date, dias, semFim ? (freq === 'quinzenal' ? 26 : 52) : Math.max(1, Math.min(52, Number(count) || 1)), freq === 'quinzenal' ? 2 : 1) : [date]) : [];
   const selDates = [...new Set([...baseDates.filter(d => !removed.includes(d)), ...manual])].sort();
   const busyOn = (d) => conflictsFor(st, who, d, period).length > 0;
   const tapCal = (d) => {
@@ -1408,6 +1460,7 @@ function EventForm({ me, init, onClose }) {
   const save = async (excluded) => {
     setErr('');
     if (!date) return setErr('Escolha a data.');
+    if (ens && !editing && freq !== 'nao' && !dias.length) return setErr('Escolha em quais dias da semana são os ensaios.');
     // Trava final: com os substitutos já descontados, ninguém pode ficar com dois compromissos no mesmo período.
     const still = conflictsFor(st, who.filter(l => !(excluded || []).includes(l)), date, period, editing?.id);
     if (still.length) { setAsk(null); return setErr('Essa data e período já estão ocupados. Escolha outra data ou outro período.'); }
@@ -1432,7 +1485,7 @@ function EventForm({ me, init, onClose }) {
       const seriesId = uid('ser'); const skipped = []; let made = 0;
       for (const d of selDates) {
         if (conflictsFor(st, who, d, period).length) { skipped.push(fmtDate(d)); continue; }
-        const one = { ...ev, id: made === 0 ? ev.id : uid('ev'), date: d, seriesId, seriesFirst: made === 0, seriesFreq: freq, seriesDias: dias, extra: manual.includes(d) || (!!extra && selDates.length === 1) };
+        const one = { ...ev, id: made === 0 ? ev.id : uid('ev'), date: d, seriesId, seriesFirst: made === 0, seriesFreq: freq, seriesDias: dias, seriesOpen: semFim && freq !== 'nao', extra: manual.includes(d) || (!!extra && selDates.length === 1) };
         await Store.set('eventos', one.id, one); made++;
       }
       Store.log('agendamento', cantorName(st, me), 'Ensaios ' + (g ? g.name : 'Solo') + ' (' + made + 'x a partir de ' + fmtDate(date) + ')');
@@ -1466,7 +1519,7 @@ function EventForm({ me, init, onClose }) {
           ${groups.map(x => html`<button key=${x.id} class=${'chip ' + (owner===x.id?'on':'')} style=${owner===x.id ? {background:x.color} : {borderColor:x.color+'88'}} onClick=${() => setOwner(x.id)}>🎤 ${x.name}</button>`)}
         </div>
       </div>`}
-      <div class="lbl">Quando</div>
+      <div class="lbl">${ens && !editing && freq !== 'nao' ? 'A partir de' : 'Quando'}</div>
       <input class="inp" type="date" value=${date} onInput=${e => setDate(e.target.value)} />
       <div class="seg">${PERIODOS.map(p => html`<button key=${p.id} class=${period===p.id?'on':''} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}</button>`)}</div>
       ${!isBlock && html`<input class="inp" type="time" value=${time} onInput=${e => setTime(e.target.value)} />`}
@@ -1482,8 +1535,10 @@ function EventForm({ me, init, onClose }) {
           <div class="chips" style=${{flexWrap:'wrap'}}>${DOW3.map((lb, i) => html`<button key=${i} class=${'chip ' + (dias.includes(i) ? 'on' : '')} style=${dias.includes(i) ? {background:'#10b981'} : null} onClick=${() => setDias(dias.includes(i) ? dias.filter(x => x !== i) : [...dias, i])}>${lb}</button>`)}</div>
           <div class="row" style=${{gap:'8px', alignItems:'center'}}>
             <span class="muted">Por quantas semanas?</span>
-            <input class="inp" type="number" min="1" max="52" style=${{width:'90px'}} value=${count} onInput=${e => setCount(e.target.value)} />
+            ${!semFim && html`<input class="inp" type="number" min="1" max="52" style=${{width:'90px'}} value=${count} onInput=${e => setCount(e.target.value === '' ? '' : String(Math.max(1, Math.min(52, Number(e.target.value) || 1))))} />`}
+            <button class=${'chip ' + (semFim ? 'on' : '')} style=${semFim ? {background:'linear-gradient(135deg,#8b5cf6,#06b6d4)'} : null} onClick=${() => setSemFim(!semFim)}>♾️ Indefinido</button>
           </div>
+          ${semFim ? html`<div class="dim">♾️ Repete sem data pra acabar: o app marca 1 ano à frente e vai estendendo sozinho. Pra parar, exclua um ensaio e escolha “excluir também os próximos”.</div>` : html`<div class="dim">(máx. 52 semanas = 1 ano)</div>`}
           ${!dias.length && html`<div class="err">Escolha pelo menos um dia da semana.</div>`}
         `}
         <div class="lbl" style=${{marginTop:'4px'}}>📅 Calendário dos ensaios</div>
@@ -2291,6 +2346,12 @@ function App() {
       notify(t1, t2);
     });
   }, [avisos, status, me]);
+  const extendedRef = useRef(false);
+  useEffect(() => {
+    if (!me || extendedRef.current || status === 'conectando') return;
+    extendedRef.current = true;
+    extendOpenSeries(st, me).catch(() => {});
+  }, [status, me]);
   const seenAt = Number((me && localStorage.getItem(SEEN_KEY + me)) || 0);
   const unread = tab === 'avisos' ? 0 : avisos.filter(a => a.at > seenAt).length;
 
