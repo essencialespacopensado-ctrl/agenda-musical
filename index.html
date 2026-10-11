@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-09-27.01';
+const APP_VERSION = '2026-10-11.02';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -194,6 +194,43 @@ function waLink(phone, text) {
   if (d.length <= 11) d = '55' + d;
   return 'https://wa.me/' + d + '?text=' + encodeURIComponent(text || '');
 }
+
+// ---------- distância e custo de deslocamento ----------
+// Usa mapas abertos e gratuitos (OpenStreetMap pra achar o endereço, OSRM pra rota de carro).
+// Não precisa de chave nem de cartão. O botão "ver rota" abre a mesma viagem no Google Maps.
+const brl = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+const parseMoney = (s) => { const n = parseFloat(String(s || '').replace(/[^\d,.-]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',', '.')); return isNaN(n) ? 0 : n; };
+const geoCache = {};
+async function geocode(q) {
+  const key = (q || '').trim().toLowerCase();
+  if (!key) throw new Error('vazio');
+  if (geoCache[key]) return geoCache[key];
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&accept-language=pt-BR&q=' + encodeURIComponent(q));
+  const j = await r.json();
+  if (!j || !j.length) throw new Error('nao-achou');
+  return (geoCache[key] = { lat: +j[0].lat, lon: +j[0].lon, label: j[0].display_name });
+}
+async function routeKm(a, b) {
+  const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`);
+  const j = await r.json();
+  if (!j.routes || !j.routes.length) throw new Error('sem-rota');
+  return { km: j.routes[0].distance / 1000, min: j.routes[0].duration / 60 };
+}
+function costOf(cfg, kmOneWay) {
+  const kmTotal = kmOneWay * (cfg.idaVolta === false ? 1 : 2);
+  const desloc = kmTotal * (Number(cfg.valorKm) || 0);
+  const total = desloc + (Number(cfg.extra) || 0);
+  return { kmTotal, desloc, total: Math.max(total, Number(cfg.minimo) || 0) };
+}
+// Calcula tudo a partir do endereço da igreja; o ponto de saída já vem salvo no grupo.
+async function quoteFor(cfg, destino) {
+  const from = (cfg.lat && cfg.lon) ? { lat: cfg.lat, lon: cfg.lon } : await geocode(cfg.origem);
+  const to = await geocode(destino);
+  const { km, min } = await routeKm(from, to);
+  return { km, min, ...costOf(cfg, km), destinoLabel: to.label };
+}
+const mapsLink = (from, to) => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + encodeURIComponent(from || '') + '&destination=' + encodeURIComponent(to || '');
+const bookingLink = (gid) => location.origin + location.pathname + '?agendar=' + encodeURIComponent(gid);
 
 // ---------- banco de dados (nuvem + cópia local) ----------
 // Tudo que é mudado vai direto pra nuvem (Firestore) — não existe botão "Salvar geral".
@@ -284,6 +321,15 @@ const Store = (() => {
       if (!taken) localSet('cantores', login, data);
       return taken ? { taken:true } : { ok:true };
     },
+    // Observação nova num compromisso: usa arrayUnion, então duas pessoas escrevendo ao mesmo
+    // tempo não apagam a observação uma da outra.
+    async addObs(evId, obs) {
+      const cur = state.eventos[evId]; if (!cur) return false;
+      localSet('eventos', evId, { ...cur, obs: [...(cur.obs || []), obs] });
+      if (!isCloud()) return true;
+      const { doc, setDoc, arrayUnion } = window.__fb.h;
+      try { await setDoc(doc(window.__fb.db, COL.eventos, evId), { obs: arrayUnion(obs) }, { merge:true }); return true; } catch(e) { console.error(e); status='erro'; emit(); return false; }
+    },
     log(type, who, detail) {
       const id = uid('log');
       this.set('log', id, { type, who: who || '', detail: detail || '', at: Date.now() });
@@ -328,18 +374,22 @@ function ownerColor(st, ev) {
   return SOLO_COLOR;
 }
 function cantorName(st, login) { return st.cantores[login]?.name || login; }
-const allEvents = (st) => Object.values(st.eventos).filter(e => e.date);
+const allEvents = (st) => Object.values(st.eventos).filter(e => e.date && e.status !== 'recusado');
 const eventsOn = (st, date) => allEvents(st).filter(e => e.date === date);
 
 // Compromissos de uma pessoa (solo, bloqueios e todos os grupos dela).
 function eventsOfPerson(st, login) {
   return allEvents(st).filter(e => participantsOf(st, e).includes(login));
 }
+// Pedido de igreja ainda não confirmado pelo grupo: aparece em amarelo pro próprio grupo,
+// mas NÃO bloqueia os outros grupos dos integrantes até alguém confirmar.
+const isChurchPending = (ev) => ev.source === 'igreja' && ev.status === 'pendente';
+
 // Conflitos de uma lista de pessoas numa data/período (ignorando um compromisso específico).
 function conflictsFor(st, logins, date, period, ignoreId) {
   const out = [];
   eventsOn(st, date).forEach(e => {
-    if (e.id === ignoreId || !overlap(e.period, period)) return;
+    if (e.id === ignoreId || !overlap(e.period, period) || isChurchPending(e)) return;
     const parts = participantsOf(st, e);
     logins.forEach(l => { if (parts.includes(l)) out.push({ login:l, ev:e }); });
   });
@@ -351,11 +401,20 @@ function groupDay(st, g, date) {
   const own = evs.filter(e => e.ownerType === 'grupo' && e.ownerId === g.id);
   const busy = [];
   evs.forEach(e => {
-    if (e.ownerType === 'grupo' && e.ownerId === g.id) return;
+    if ((e.ownerType === 'grupo' && e.ownerId === g.id) || isChurchPending(e)) return;
     const parts = participantsOf(st, e);
     (g.members||[]).forEach(m => { if (parts.includes(m)) busy.push({ login:m, ev:e }); });
   });
   return { own, busy };
+}
+// Situação pública (página das igrejas): só "livre / a confirmar / indisponível", sem detalhes.
+function publicDay(st, g, date, period) {
+  const { own, busy } = groupDay(st, g, date);
+  const hit = (list) => list.filter(x => !period || overlap((x.ev || x).period, period));
+  const o = hit(own.filter(e => e.status !== 'recusado'));
+  if (o.some(e => !isChurchPending(e)) || hit(busy).length) return 'busy';
+  if (o.length) return 'maybe';
+  return 'free';
 }
 function describeEv(st, ev) {
   const p = PER[ev.period] || PER.dia;
@@ -371,13 +430,21 @@ function buildAvisos(st, login) {
   const groups = myGroups(st, login);
   const out = [];
   allEvents(st).forEach(e => {
-    if (e.date < today) return;
+    if (e.date < today || e.status === 'recusado') return;
     const parts = participantsOf(st, e);
+    // Observações de outras pessoas em compromissos de que eu participo.
+    if (parts.includes(login)) {
+      (e.obs || []).forEach((o, i) => {
+        if (o.by !== login) out.push({ id: e.id + '|obs|' + i + '|' + o.at, kind:'obs', ev:e, obs:o, g: e.ownerType === 'grupo' ? st.grupos[e.ownerId] : null, at:o.at || 0 });
+      });
+    }
     groups.forEach(g => {
       if (e.ownerType === 'grupo' && e.ownerId === g.id) {
-        if (e.createdBy && e.createdBy !== login) out.push({ id:e.id+'|'+g.id, kind:'novo', g, ev:e, at:e.createdAt||0 });
+        if (e.source === 'igreja') out.push({ id:e.id+'|'+g.id, kind:'pedido', g, ev:e, at:e.createdAt||0 });
+        else if (e.createdBy && e.createdBy !== login) out.push({ id:e.id+'|'+g.id, kind:'novo', g, ev:e, at:e.createdAt||0 });
         return;
       }
+      if (isChurchPending(e)) return;
       const who = (g.members||[]).filter(m => m !== login && parts.includes(m));
       if (who.length) out.push({ id:e.id+'|'+g.id, kind:'bloqueio', g, ev:e, who, at:e.createdAt||0 });
     });
@@ -488,7 +555,7 @@ function LoginScreen({ onLogin }) {
     });
     setBusy(false);
     if (r.taken) return setErr('Esse usuário já existe. Escolha outro.');
-    if (r.error) return setErr('Não consegui salvar na nuvem agora. Verifique a internet e tente de novo.');
+    if (r.error) return setErr('Não consegui criar a conta agora. Tente de novo em instantes; se continuar, fale com o Paulo.');
     Store.log('cadastro', f.name.trim());
     onLogin({ login }, true);
   };
@@ -734,6 +801,50 @@ function EventRow({ ev, onClick }) {
   </button>`;
 }
 
+// Dados que a igreja preencheu no link de agendamento + custo calculado.
+function ChurchInfo({ ev }) {
+  const st = useStore();
+  const c = ev.church || {};
+  const g = st.grupos[ev.ownerId];
+  const wa = waLink(c.phone, 'Olá! Aqui é do ' + (g?.name || 'grupo') + ', sobre o pedido de apresentação no dia ' + fmtDate(ev.date) + '.');
+  return html`<div style=${{marginTop:'8px', padding:'10px', borderRadius:'12px', background:'rgba(148,163,184,.08)', display:'grid', gap:'3px'}}>
+    <div style=${{fontWeight:800}}>⛪ ${c.name || 'Igreja'}</div>
+    ${c.contact && html`<div class="muted">👤 ${c.contact}${c.phone ? ' · ' + c.phone : ''}</div>`}
+    ${c.address && html`<div class="muted">📍 ${c.address}</div>`}
+    ${c.km ? html`<div class="muted">🚗 ${c.km.toFixed(0)} km (ida) · ${brl(c.cost)} de deslocamento</div>` : html`<div class="dim">🚗 Distância não calculada</div>`}
+    <div class="row" style=${{gap:'6px', marginTop:'6px', flexWrap:'wrap'}}>
+      ${wa && html`<a class="btn2" style=${{textDecoration:'none'}} href=${wa} target="_blank">💬 WhatsApp da igreja</a>`}
+      ${c.address && g?.cost?.origem && html`<a class="btn2" style=${{textDecoration:'none'}} href=${mapsLink(g.cost.origem, c.address)} target="_blank">🗺️ Ver rota</a>`}
+    </div>
+  </div>`;
+}
+
+// Observações dentro de cada apresentação (tipo um chat curto entre os integrantes).
+function ObsThread({ ev, me, canWrite }) {
+  const st = useStore();
+  const [txt, setTxt] = useState('');
+  const list = (ev.obs || []).slice().sort((a,b) => (a.at||0) - (b.at||0));
+  const fmtAt = (t) => { const d = new Date(t); return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const send = async () => {
+    const t = txt.trim(); if (!t) return;
+    setTxt('');
+    await Store.addObs(ev.id, { by: me, text: t, at: Date.now() });
+    toast('Observação enviada 💬');
+  };
+  if (!list.length && !canWrite) return null;
+  return html`<div style=${{marginTop:'10px', borderTop:'1px solid var(--border-soft)', paddingTop:'8px', display:'grid', gap:'6px'}}>
+    <div class="lbl" style=${{margin:0}}>💬 Observações${list.length ? ' (' + list.length + ')' : ''}</div>
+    ${list.map((o, i) => html`<div key=${i} style=${{padding:'7px 10px', borderRadius:'10px', background: o.by === me ? 'rgba(139,92,246,.16)' : 'rgba(148,163,184,.08)'}}>
+      <div style=${{fontSize:'13.5px'}}>${o.text}</div>
+      <div class="dim" style=${{fontSize:'11px', marginTop:'2px'}}>${o.by === me ? 'Você' : cantorName(st, o.by)} · ${fmtAt(o.at)}</div>
+    </div>`)}
+    ${canWrite && html`<div class="row" style=${{gap:'6px'}}>
+      <input class="inp" style=${{padding:'9px 11px', fontSize:'14px'}} placeholder="Escrever observação…" value=${txt} onInput=${e => setTxt(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') send(); }} />
+      <button class="btn2" style=${{whiteSpace:'nowrap'}} disabled=${!txt.trim()} onClick=${send}>Enviar</button>
+    </div>`}
+  </div>`;
+}
+
 function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
   const st = useStore();
   const g = ctx.type === 'grupo' ? st.grupos[ctx.id] : null;
@@ -748,7 +859,22 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
     Store.log('exclusao', cantorName(st, me), ownerName(st, ev) + ' ' + fmtDate(ev.date));
     toast('Compromisso excluído');
   };
-  const confirmEv = async (ev) => { await Store.update('eventos', ev.id, { status:'confirmado' }); toast('Confirmado ✅'); };
+  const confirmEv = async (ev) => {
+    if (isChurchPending(ev)) {
+      const g2 = st.grupos[ev.ownerId];
+      const c = conflictsFor(st, (g2?.members || []), ev.date, ev.period, ev.id);
+      if (c.length && !confirm('Atenção: ' + [...new Set(c.map(x => cantorName(st, x.login)))].join(', ') + ' já tem outro compromisso nesse período. Confirmar mesmo assim?')) return;
+    }
+    await Store.update('eventos', ev.id, { status:'confirmado', confirmedBy: me, confirmedAt: Date.now() });
+    Store.log('confirmacao', cantorName(st, me), ownerName(st, ev) + ' ' + fmtDate(ev.date));
+    toast('Confirmado ✅');
+  };
+  const refuseEv = async (ev) => {
+    if (!confirm('Recusar o pedido de ' + (ev.church?.name || 'igreja') + '? A data volta a aparecer livre pras igrejas.')) return;
+    await Store.update('eventos', ev.id, { status:'recusado', refusedBy: me, refusedAt: Date.now() });
+    Store.log('recusa', cantorName(st, me), (ev.church?.name || 'igreja') + ' ' + fmtDate(ev.date));
+    toast('Pedido recusado');
+  };
 
   return html`<${Sheet} title=${fmtDateLong(date)} onClose=${onClose}>
     <div style=${{display:'grid', gap:'10px'}}>
@@ -761,16 +887,19 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
           <div class="muted" style=${{marginTop:'3px'}}>${p.ic} ${p.label}${ev.time ? ' · ' + ev.time : ''}</div>
           ${ev.kind !== 'bloqueio' && ev.place && html`<div class="muted">📍 ${ev.place}</div>`}
           ${ev.notes && html`<div class="muted">📝 ${ev.notes}</div>`}
+          ${ev.source === 'igreja' && ev.church && html`<${ChurchInfo} ev=${ev} />`}
           ${ev.ownerType === 'grupo' && html`<div class="dim" style=${{marginTop:'4px'}}>👥 ${parts.map(l => cantorName(st, l)).join(', ')}${(ev.excluded||[]).length ? ' · substituído(s): ' + ev.excluded.map(l => cantorName(st, l)).join(', ') : ''}</div>`}
           <div class="row" style=${{marginTop:'6px', flexWrap:'wrap', gap:'6px'}}>
             ${ev.status === 'pendente' ? html`<span class="sync" style=${{background:'rgba(245,158,11,.15)', color:'#fcd34d'}}>🟡 A confirmar</span>` : ev.kind !== 'bloqueio' ? html`<span class="sync" style=${{background:'rgba(59,130,246,.18)', color:'#93c5fd'}}>🔵 Confirmado</span>` : null}
-            <span class="dim">marcado por ${cantorName(st, ev.createdBy)}</span>
+            <span class="dim">${ev.source === 'igreja' ? '⛪ pedido feito pela igreja' : 'marcado por ' + cantorName(st, ev.createdBy)}</span>
           </div>
           ${canTouch(ev) && html`<div class="row" style=${{marginTop:'10px', gap:'6px'}}>
             ${ev.status === 'pendente' && html`<button class="btn2 btn-green" style=${{flex:1}} onClick=${() => confirmEv(ev)}>✅ Confirmar</button>`}
-            <button class="btn2" style=${{flex:1}} onClick=${() => onEdit(ev)}>✏️ Editar</button>
-            <button class="btn2 btn-red" style=${{flex:1}} onClick=${() => del(ev)}>🗑️ Excluir</button>
+            ${isChurchPending(ev) ? html`<button class="btn2 btn-red" style=${{flex:1}} onClick=${() => refuseEv(ev)}>✖️ Recusar</button>` : html`
+              <button class="btn2" style=${{flex:1}} onClick=${() => onEdit(ev)}>✏️ Editar</button>
+              <button class="btn2 btn-red" style=${{flex:1}} onClick=${() => del(ev)}>🗑️ Excluir</button>`}
           </div>`}
+          ${ev.kind !== 'bloqueio' && html`<${ObsThread} ev=${ev} me=${me} canWrite=${!!me && (parts.includes(me) || canTouch(ev))} />`}
         </div>`;
       })}
       ${busy.length > 0 && html`<div class="err">
@@ -943,6 +1072,12 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState('');
   const isLeader = g.leader === me;
+  const [costs, setCosts] = useState(false);
+  const copyLink = async () => {
+    const link = bookingLink(g.id);
+    try { await navigator.clipboard.writeText(link); toast('Link copiado! Mande pras igrejas 🔗'); }
+    catch(e) { prompt('Copie o link do grupo:', link); }
+  };
   const members = (g.members||[]);
   const candidates = activeCantores(st).filter(c => !members.includes(c.id) && (!q || c.name.toLowerCase().includes(q.toLowerCase()))).sort((a,b) => a.name.localeCompare(b.name,'pt-BR'));
   const add = async (login) => { await Store.update('grupos', g.id, { members: [...members, login] }); toast(cantorName(st, login) + ' entrou no grupo'); Store.log('integrante', cantorName(st, me), cantorName(st, login) + ' → ' + g.name); };
@@ -968,6 +1103,15 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
         <button class="btn" style=${{background:g.color}} onClick=${onAgenda}>📅 Ver agenda do grupo</button>
         <button class="btn2" onClick=${onEdit}>✏️</button>
       </div>
+      <div class="glass card" style=${{display:'grid', gap:'8px', padding:'12px'}}>
+        <div style=${{fontWeight:800}}>⛪ Agendamento pelas igrejas</div>
+        <div class="dim">${g.cost?.valorKm ? 'Saída: ' + (g.cost.origem || '—') + ' · ' + brl(g.cost.valorKm) + '/km' + (g.cost.idaVolta === false ? ' (só ida)' : ' (ida e volta)') : 'Configure os custos de deslocamento pra igreja já ver o valor ao agendar.'}</div>
+        <div class="row" style=${{gap:'6px'}}>
+          <button class="btn2" style=${{flex:1}} onClick=${() => setCosts(true)}>💰 Custos</button>
+          <button class="btn2" style=${{flex:1}} onClick=${copyLink}>🔗 Copiar link</button>
+          <a class="btn2" style=${{textDecoration:'none', textAlign:'center'}} href=${bookingLink(g.id)} target="_blank">👁️</a>
+        </div>
+      </div>
       <div class="lbl">Integrantes (${members.length})</div>
       <div class="list">${members.map(m => { const c = st.cantores[m]; const wa = c && waLink(c.phone, 'Olá ' + (c.name||'').split(' ')[0] + '! Sobre o ' + g.name + ':'); return html`<div key=${m} class="item">
         <${Avatar} name=${cantorName(st, m)} />
@@ -989,6 +1133,81 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
         <button class="btn2" onClick=${() => { setAdding(false); setQ(''); }}>Pronto</button>
       </div>` : html`<button class="btn2 btn-green" onClick=${() => setAdding(true)}>➕ Adicionar integrante</button>`}
       ${isLeader && html`<button class="btn2 btn-red" onClick=${delGroup}>🗑️ Apagar grupo</button>`}
+    </div>
+    ${costs && html`<${CostForm} g=${g} me=${me} onClose=${() => setCosts(false)} />`}
+  </${Sheet}>`;
+}
+
+// Página de custos do grupo: ponto de saída, valor por km, ida e volta, extras.
+function CostForm({ g, me, onClose }) {
+  const c = g.cost || {};
+  const [origem, setOrigem] = useState(c.origem || '');
+  const [valorKm, setValorKm] = useState(c.valorKm != null ? String(c.valorKm).replace('.', ',') : '');
+  const [idaVolta, setIdaVolta] = useState(c.idaVolta !== false);
+  const [extra, setExtra] = useState(c.extra ? String(c.extra).replace('.', ',') : '');
+  const [extraLabel, setExtraLabel] = useState(c.extraLabel || '');
+  const [minimo, setMinimo] = useState(c.minimo ? String(c.minimo).replace('.', ',') : '');
+  const [obs, setObs] = useState(c.obs || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [test, setTest] = useState('');
+  const [testRes, setTestRes] = useState(null);
+  const cfg = { origem, valorKm: parseMoney(valorKm), idaVolta, extra: parseMoney(extra), minimo: parseMoney(minimo) };
+
+  const save = async () => {
+    setErr('');
+    if (!origem.trim()) return setErr('Informe de onde o grupo sai (cidade ou endereço).');
+    if (!cfg.valorKm) return setErr('Informe o valor por km (ex: 1,50).');
+    setBusy(true);
+    let geo = null;
+    try { geo = await geocode(origem); } catch(e) { setBusy(false); return setErr('Não achei esse endereço no mapa. Tente "Rua, número, cidade - UF" ou só "Cidade - UF".'); }
+    await Store.update('grupos', g.id, { cost: { origem: origem.trim(), lat: geo.lat, lon: geo.lon, valorKm: cfg.valorKm, idaVolta, extra: cfg.extra, extraLabel: extraLabel.trim(), minimo: cfg.minimo, obs: obs.trim(), updatedBy: me } });
+    setBusy(false);
+    toast('Custos salvos ✅');
+    onClose();
+  };
+  const simulate = async () => {
+    setTestRes(null); setErr('');
+    if (!origem.trim() || !test.trim()) return;
+    setTestRes({ loading:true });
+    try { setTestRes(await quoteFor({ ...cfg, lat:null, lon:null }, test)); }
+    catch(e) { setTestRes(null); setErr('Não consegui calcular essa rota. Confira os dois endereços.'); }
+  };
+
+  return html`<${Sheet} title=${'💰 Custos — ' + g.name} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      ${err && html`<div class="err">${err}</div>`}
+      <div class="lbl">De onde o grupo sai</div>
+      <input class="inp" placeholder="Ex: Rua X, 100, Camboriú - SC" value=${origem} onInput=${e => setOrigem(e.target.value)} />
+      <div class="lbl">Valor por km</div>
+      <input class="inp" inputmode="decimal" placeholder="Ex: 1,50" value=${valorKm} onInput=${e => setValorKm(e.target.value)} />
+      <div class="seg">
+        <button class=${idaVolta ? 'on' : ''} onClick=${() => setIdaVolta(true)}>↔️ Ida e volta</button>
+        <button class=${!idaVolta ? 'on' : ''} onClick=${() => setIdaVolta(false)}>➡️ Só ida</button>
+      </div>
+      <div class="lbl">Extra fixo (opcional)</div>
+      <div class="row" style=${{gap:'6px'}}>
+        <input class="inp" placeholder="Pedágio, alimentação…" value=${extraLabel} onInput=${e => setExtraLabel(e.target.value)} />
+        <input class="inp" style=${{maxWidth:'120px'}} inputmode="decimal" placeholder="R$ 0,00" value=${extra} onInput=${e => setExtra(e.target.value)} />
+      </div>
+      <div class="lbl">Valor mínimo (opcional)</div>
+      <input class="inp" inputmode="decimal" placeholder="Ex: 50,00 (pra viagens curtas)" value=${minimo} onInput=${e => setMinimo(e.target.value)} />
+      <textarea class="inp" rows="2" placeholder="Observação que a igreja vai ver (ex: valor combinado na hora, aceitamos Pix…)" value=${obs} onInput=${e => setObs(e.target.value)}></textarea>
+
+      <div class="glass card" style=${{display:'grid', gap:'8px', padding:'12px'}}>
+        <div style=${{fontWeight:800}}>🧮 Simular</div>
+        <div class="row" style=${{gap:'6px'}}>
+          <input class="inp" placeholder="Endereço de uma igreja pra testar" value=${test} onInput=${e => setTest(e.target.value)} />
+          <button class="btn2" onClick=${simulate}>Calcular</button>
+        </div>
+        ${testRes?.loading && html`<div class="dim">Calculando a rota…</div>`}
+        ${testRes && !testRes.loading && html`<div class="okbox">
+          🚗 ${testRes.km.toFixed(1)} km (ida) · ${testRes.kmTotal.toFixed(1)} km no total · ~${Math.round(testRes.min)} min<br/>
+          💰 <b>${brl(testRes.total)}</b> ${cfg.extra ? '(inclui ' + brl(cfg.extra) + ' de ' + (extraLabel || 'extra') + ')' : ''}
+          <div style=${{marginTop:'6px'}}><a style=${{color:'#6ee7b7'}} href=${mapsLink(origem, test)} target="_blank">🗺️ Conferir rota no Google Maps</a></div>
+        </div>`}
+      </div>
+      <button class="btn" disabled=${busy} onClick=${save}>${busy ? 'Salvando…' : 'Salvar custos'}</button>
     </div>
   </${Sheet}>`;
 }
@@ -1034,18 +1253,32 @@ function AvisosView({ me, avisos, openDay }) {
   const [seen] = useState(() => Number(localStorage.getItem(SEEN_KEY + me) || 0));
   useEffect(() => { try { localStorage.setItem(SEEN_KEY + me, String(Date.now())); } catch(e) {} }, []);
   return html`<div class="fade-up" style=${{display:'grid', gap:'10px'}}>
-    ${avisos.length === 0 && html`<div class="glass card muted">Nenhum aviso. Quando alguém dos seus grupos marcar outro compromisso, a data aparece aqui como indisponível. 🔔</div>`}
-    ${avisos.map(a => html`<button key=${a.id} class="item" onClick=${() => openDay(a)} style=${{borderLeft:'5px solid ' + (a.kind === 'novo' ? a.g.color : 'var(--busy)'), background: a.at > seen ? 'rgba(236,72,153,.08)' : undefined}}>
-      <div style=${{fontSize:'22px'}}>${a.kind === 'novo' ? '📅' : '🔴'}</div>
-      <div style=${{flex:1}}>
-        ${a.kind === 'novo'
-          ? html`<div style=${{fontWeight:800}}>${a.g.name}: nova apresentação</div>
-                 <div class="dim">${fmtDateLong(a.ev.date)} · ${PER[a.ev.period]?.label}${a.ev.place ? ' · ' + a.ev.place : ''} — marcado por ${cantorName(st, a.ev.createdBy)}</div>`
-          : html`<div style=${{fontWeight:800}}>${a.g.name} indisponível em ${fmtDate(a.ev.date)}</div>
-                 <div class="dim">${a.who.map(w => cantorName(st, w)).join(', ')} ${a.who.length > 1 ? 'estão' : 'está'} em: ${ownerName(st, a.ev)} (${PER[a.ev.period]?.label})</div>`}
+    ${avisos.length === 0 && html`<div class="glass card muted">Nenhum aviso ainda. Aqui aparecem os pedidos das igrejas, as observações dos integrantes e as datas que ficaram indisponíveis nos seus grupos. 🔔</div>`}
+    ${avisos.map(a => { const [t1, t2] = avisoText(st, a); const color = a.kind === 'bloqueio' ? 'var(--busy)' : a.kind === 'pedido' ? 'var(--maybe)' : (a.g?.color || SOLO_COLOR); return html`<button key=${a.id} class="item" onClick=${() => openDay(a)} style=${{borderLeft:'5px solid ' + color, background: a.at > seen ? 'rgba(236,72,153,.08)' : undefined}}>
+      <div style=${{flex:1, minWidth:0}}>
+        <div style=${{fontWeight:800}}>${t1}</div>
+        <div class="dim">${t2}</div>
+        ${a.kind === 'pedido' && html`<div class="dim">${isChurchPending(a.ev) ? '🟡 Aguardando confirmação' : '🔵 Confirmado'}${a.ev.church?.cost ? ' · ' + brl(a.ev.church.cost) : ''}</div>`}
+        ${a.kind === 'obs' && html`<div class="dim">em ${ownerName(st, a.ev)} · ${fmtDate(a.ev.date)}</div>`}
       </div>
       ${a.at > seen && html`<span class="dot" style=${{background:'var(--accent-1)', width:'9px', height:'9px'}}></span>`}
-    </button>`)}
+    </button>`; })}
+  </div>`;
+}
+
+function NotifyCard() {
+  const supported = 'Notification' in window;
+  const [perm, setPerm] = useState(supported ? Notification.permission : 'unsupported');
+  const ask = async () => {
+    try { const p = await Notification.requestPermission(); setPerm(p); if (p === 'granted') notify('🔔 Notificações ativadas', 'Você vai ser avisado de pedidos de igrejas e observações novas.'); } catch(e) {}
+  };
+  return html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
+    <div style=${{fontWeight:800}}>🔔 Notificações neste aparelho</div>
+    ${perm === 'granted' ? html`<div class="okbox">Ativadas. Você recebe aviso de pedidos de igrejas, observações e datas bloqueadas enquanto o app estiver aberto ou minimizado.</div>`
+      : perm === 'denied' ? html`<div class="warnbox">Bloqueadas no navegador. Para liberar: toque no cadeado ao lado do endereço → Notificações → Permitir.</div>`
+      : perm === 'unsupported' ? html`<div class="dim">Este navegador não suporta notificações. No iPhone, instale o app na Tela de Início primeiro.</div>`
+      : html`<button class="btn" onClick=${ask}>Ativar notificações</button>
+             <div class="dim">Funciona com o app aberto ou minimizado. Com o app totalmente fechado o celular não apita — os avisos ficam esperando na aba 🔔 Avisos.</div>`}
   </div>`;
 }
 
@@ -1078,6 +1311,7 @@ function ProfileView({ me, onLogout, installPrompt }) {
       <${PasswordInput} value=${np} onChange=${setNp} placeholder="Nova senha" />
       <button class="btn2" disabled=${np.length < 4} onClick=${async () => { await Store.update('cantores', me, { passHash: simpleHash(np) }); setNp(''); toast('Senha trocada ✅'); }}>Salvar nova senha</button>
     </div>
+    <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
       <div style=${{fontWeight:800}}>📲 Instalar no celular</div>
       ${installPrompt ? html`<button class="btn" onClick=${() => installPrompt.prompt()}>Instalar Agenda Musical</button>`
@@ -1114,7 +1348,7 @@ function DevView() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'agenda-musical-backup-' + todayStr() + '.json'; a.click();
   };
   const fmtAt = (t) => { const d = new Date(t); return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
-  const LOGIC = { login:'🔓', cadastro:'🆕', agendamento:'📅', edicao:'✏️', exclusao:'🗑️', grupo:'🎤', integrante:'👥', senha:'🔑', admin:'🛠️' };
+  const LOGIC = { login:'🔓', cadastro:'🆕', agendamento:'📅', edicao:'✏️', exclusao:'🗑️', grupo:'🎤', integrante:'👥', senha:'🔑', admin:'🛠️', pedido:'⛪', confirmacao:'✅', recusa:'✖️' };
 
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
     <div class="glass card">
@@ -1158,6 +1392,162 @@ function DevView() {
   </div>`;
 }
 
+// ---------- PÁGINA PÚBLICA: IGREJA AGENDA O GRUPO (sem login) ----------
+function PublicBooking({ gid }) {
+  const st = useStore();
+  const status = useStatus();
+  const g = st.grupos[gid];
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [day, setDay] = useState(null);
+  const [done, setDone] = useState(null);
+  const [msg, setMsg] = useState('');
+  const tRef = useRef();
+  toastFn = (m) => { setMsg(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setMsg(''), 2600); };
+  const today = todayStr();
+
+  if (!g || g.removed) {
+    const loading = status === 'conectando' || (status !== 'local' && !Object.keys(st.grupos).length);
+    return html`<div class="app"><${Brand} sub=" " /><div class="glass card muted" style=${{textAlign:'center'}}>${loading ? '🔄 Carregando agenda…' : 'Esse link de agendamento não existe mais. Peça um link novo ao grupo.'}</div></div>`;
+  }
+  const dayInfo = (s) => {
+    if (s < today) return {};
+    const per = ['manha','tarde','noite'].map(p => publicDay(st, g, s, p));
+    if (per.every(x => x === 'free')) return { cls:'st-free' };
+    if (per.every(x => x === 'busy')) return { cls:'st-busy' };
+    return { cls:'st-maybe' };
+  };
+  const pick = (s) => { if (s < today) return; if (dayInfo(s).cls === 'st-busy') { toast('Esse dia está indisponível. Escolha outro.'); return; } setDay(s); };
+  const members = (g.members || []).map(m => cantorName(st, m).split(' ')[0]).join(', ');
+
+  if (done) return html`<div class="app">
+    <${Brand} sub=${g.name} />
+    <div class="glass card" style=${{display:'grid', gap:'10px', textAlign:'center'}}>
+      <div style=${{fontSize:'44px'}}>✅</div>
+      <div style=${{fontWeight:900, fontSize:'18px'}}>Pedido enviado!</div>
+      <div class="muted">O ${g.name} recebeu seu pedido para <b>${fmtDateLong(done.date)}</b> (${PER[done.period].label}). Eles vão confirmar com você${done.church.phone ? ' pelo WhatsApp' : ''}.</div>
+      ${done.church.km ? html`<div class="okbox">🚗 ${done.church.km.toFixed(0)} km · deslocamento estimado: <b>${brl(done.church.cost)}</b></div>` : null}
+      <button class="btn2" onClick=${() => setDone(null)}>Fazer outro pedido</button>
+    </div>
+  </div>`;
+
+  return html`<div class="app">
+    <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
+      <div class="avatar" style=${{width:'58px', height:'58px', fontSize:'22px', background:g.color, margin:'0 auto 8px'}}>${initials(g.name)}</div>
+      <div style=${{fontWeight:900, fontSize:'21px'}}>${g.name}</div>
+      <div class="muted">${g.tipo}${members ? ' · ' + members : ''}</div>
+      <div class="dim" style=${{marginTop:'6px'}}>Escolha uma data livre para convidar o grupo para a sua igreja.</div>
+    </div>
+    <div class="glass card">
+      <${Calendar} month=${month} setMonth=${setMonth} renderDay=${dayInfo} onPick=${pick} />
+      <div class="legend">
+        <span><i class="sq" style=${{background:'rgba(16,185,129,.5)'}}></i>Livre</span>
+        <span><i class="sq" style=${{background:'var(--maybe)'}}></i>Parcial / a confirmar</span>
+        <span><i class="sq" style=${{background:'var(--busy)'}}></i>Indisponível</span>
+      </div>
+    </div>
+    ${g.cost?.valorKm ? html`<div class="glass card" style=${{marginTop:'12px', display:'grid', gap:'4px'}}>
+      <div style=${{fontWeight:800}}>🚗 Custo de deslocamento</div>
+      <div class="muted">${brl(g.cost.valorKm)} por km ${g.cost.idaVolta === false ? '(só ida)' : '(ida e volta)'}${g.cost.extra ? ' + ' + brl(g.cost.extra) + ' de ' + (g.cost.extraLabel || 'extras') : ''}${g.cost.minimo ? ' · mínimo ' + brl(g.cost.minimo) : ''}.</div>
+      <div class="dim">O valor exato aparece quando você informar o endereço da igreja.</div>
+      ${g.cost.obs && html`<div class="dim">ℹ️ ${g.cost.obs}</div>`}
+    </div>` : null}
+    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Agenda Musical</div>
+    ${day && html`<${BookingForm} g=${g} date=${day} onClose=${() => setDay(null)} onDone=${(ev) => { setDay(null); setDone(ev); }} />`}
+    <${Toast} msg=${msg} />
+  </div>`;
+}
+
+function BookingForm({ g, date, onClose, onDone }) {
+  const st = useStore();
+  const free = PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) !== 'busy');
+  const [period, setPeriod] = useState(free.find(p => p.id === 'noite')?.id || free[0]?.id || 'noite');
+  const [f, setF] = useState({ name:'', contact:'', phone:'', address:'', time:'', notes:'' });
+  const up = (k) => (e) => setF(o => ({ ...o, [k]: e.target.value }));
+  const [quote, setQuote] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const avail = publicDay(st, g, date, period);
+  const hasCost = !!g.cost?.valorKm;
+
+  const calc = async () => {
+    setErr(''); setQuote(null);
+    if (!hasCost || !f.address.trim()) return null;
+    setQuote({ loading:true });
+    try { const q = await quoteFor(g.cost, f.address); setQuote(q); return q; }
+    catch(e) { setQuote({ failed:true }); return null; }
+  };
+  const submit = async () => {
+    setErr('');
+    if (avail === 'busy') return setErr('Esse período já está ocupado. Escolha outro período ou outra data.');
+    if (!f.name.trim()) return setErr('Informe o nome da igreja.');
+    if (!f.contact.trim() || onlyDigits(f.phone).length < 10) return setErr('Informe o nome e o WhatsApp (com DDD) de quem está agendando.');
+    if (!f.address.trim()) return setErr('Informe o endereço da igreja.');
+    setBusy(true);
+    let q = quote && !quote.loading && !quote.failed ? quote : (hasCost ? await calc() : null);
+    const id = uid('ev');
+    const ev = {
+      id, kind:'apresentacao', ownerType:'grupo', ownerId:g.id, date, period, time: f.time || '',
+      place: f.name.trim(), notes: f.notes.trim(), status:'pendente', source:'igreja', excluded:[],
+      createdBy: '__igreja__', createdAt: Date.now(),
+      church: { name: f.name.trim(), contact: f.contact.trim(), phone: f.phone.trim(), address: f.address.trim(),
+        km: q ? Math.round(q.km * 10) / 10 : 0, cost: q ? Math.round(q.total * 100) / 100 : 0 },
+    };
+    const ok = await Store.set('eventos', id, ev);
+    setBusy(false);
+    if (!ok) return setErr('Não consegui enviar agora. Tente de novo em instantes.');
+    Store.log('pedido', f.name.trim(), g.name + ' ' + fmtDate(date));
+    onDone(ev);
+  };
+
+  return html`<${Sheet} title=${fmtDateLong(date)} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      ${err && html`<div class="err">${err}</div>`}
+      <div class="lbl">Período</div>
+      <div class="seg">${PERIODOS.filter(p => p.id !== 'dia').map(p => { const s = publicDay(st, g, date, p.id); return html`<button key=${p.id} class=${period===p.id?'on':''} disabled=${s === 'busy'} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}${s === 'busy' ? ' ✖' : ''}</button>`; })}</div>
+      ${avail === 'maybe' && html`<div class="warnbox">🟡 Já existe outro pedido aguardando confirmação nesse período. Você pode enviar o seu mesmo assim.</div>`}
+      <input class="inp" type="time" value=${f.time} onInput=${up('time')} />
+      <div class="lbl">Sua igreja</div>
+      <input class="inp" placeholder="Nome da igreja" value=${f.name} onInput=${up('name')} />
+      <input class="inp" placeholder="Endereço (rua, número, cidade - UF)" value=${f.address} onInput=${e => { up('address')(e); setQuote(null); }} onBlur=${calc} />
+      <div class="lbl">Quem está agendando</div>
+      <input class="inp" placeholder="Seu nome" value=${f.contact} onInput=${up('contact')} />
+      <input class="inp" inputmode="tel" placeholder="WhatsApp com DDD" value=${f.phone} onInput=${up('phone')} />
+      <textarea class="inp" rows="2" placeholder="Observação (programa, música desejada…)" value=${f.notes} onInput=${up('notes')}></textarea>
+      ${hasCost && html`<div class="glass card" style=${{padding:'12px', display:'grid', gap:'6px'}}>
+        <div style=${{fontWeight:800}}>🚗 Deslocamento</div>
+        ${!quote && html`<div class="row" style=${{gap:'6px'}}><div class="dim" style=${{flex:1}}>Informe o endereço para calcular.</div><button class="btn2" disabled=${!f.address.trim()} onClick=${calc}>Calcular</button></div>`}
+        ${quote?.loading && html`<div class="dim">Calculando a distância…</div>`}
+        ${quote?.failed && html`<div class="warnbox">Não consegui calcular pelo mapa. Confira o endereço — ou envie assim mesmo que o grupo calcula pra você.</div>`}
+        ${quote && quote.km != null && html`<div>
+          <div class="muted">${quote.km.toFixed(1)} km de distância${g.cost.idaVolta === false ? '' : ' (' + quote.kmTotal.toFixed(0) + ' km ida e volta)'} · ~${Math.round(quote.min)} min</div>
+          <div style=${{fontSize:'22px', fontWeight:900, marginTop:'4px'}} class="grad-text">${brl(quote.total)}</div>
+          ${g.cost.extra ? html`<div class="dim">inclui ${brl(g.cost.extra)} de ${g.cost.extraLabel || 'extras'}</div>` : null}
+          <a class="dim" style=${{color:'var(--accent-3)'}} href=${mapsLink(g.cost.origem, f.address)} target="_blank">🗺️ Ver rota no Google Maps</a>
+        </div>`}
+      </div>`}
+      <button class="btn" disabled=${busy || avail === 'busy'} onClick=${submit}>${busy ? 'Enviando…' : 'Enviar pedido de agendamento'}</button>
+      <div class="dim" style=${{textAlign:'center'}}>O grupo confirma a data com você depois.</div>
+    </div>
+  </${Sheet}>`;
+}
+
+// Notificação do sistema (celular/computador) pra avisos novos — funciona com o app aberto
+// ou minimizado. Com o app totalmente fechado não apita (precisaria de servidor de push).
+async function notify(title, body) {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'agenda-' + Date.now() };
+    if (reg && reg.showNotification) await reg.showNotification(title, opts); else new Notification(title, opts);
+  } catch(e) {}
+}
+function avisoText(st, a) {
+  if (a.kind === 'pedido') return ['⛪ Novo pedido: ' + a.g.name, (a.ev.church?.name || 'Uma igreja') + ' quer agendar em ' + fmtDate(a.ev.date) + ' (' + (PER[a.ev.period]?.label || '') + ')'];
+  if (a.kind === 'obs') return ['💬 ' + cantorName(st, a.obs.by) + (a.g ? ' · ' + a.g.name : ''), a.obs.text];
+  if (a.kind === 'novo') return ['📅 ' + a.g.name + ': nova apresentação', fmtDateLong(a.ev.date) + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
+  return ['🔴 ' + a.g.name + ' indisponível em ' + fmtDate(a.ev.date), a.who.map(w => cantorName(st, w)).join(', ') + ' tem outro compromisso'];
+}
+
 // ---------- APP ----------
 function loadSession() {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || 'null'); } catch(e) { return null; }
@@ -1182,6 +1572,24 @@ function App() {
 
   const me = session?.login || null;
   const avisos = useMemo(() => buildAvisos(st, me), [st, me]);
+  // Dispara notificação só pros avisos que chegaram DEPOIS do app abrir e da nuvem carregar.
+  const notifiedRef = useRef(null);
+  const status = useStatus();
+  useEffect(() => {
+    if (!me) return;
+    if (notifiedRef.current === null) {
+      if (status === 'conectando') return;
+      notifiedRef.current = new Set(avisos.map(a => a.id));
+      return;
+    }
+    avisos.forEach(a => {
+      if (notifiedRef.current.has(a.id)) return;
+      notifiedRef.current.add(a.id);
+      if (a.at < Date.now() - 10 * 60 * 1000) return;
+      const [t1, t2] = avisoText(st, a);
+      notify(t1, t2);
+    });
+  }, [avisos, status, me]);
   const seenAt = Number((me && localStorage.getItem(SEEN_KEY + me)) || 0);
   const unread = tab === 'avisos' ? 0 : avisos.filter(a => a.at > seenAt).length;
 
@@ -1231,7 +1639,10 @@ function App() {
       ${tab === 'perfil' && html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} />`}
       ${tab === 'dev' && html`<${DevView} />`}
 
-      ${avisoDay && html`<${DaySheet} me=${me} ctx=${{ type:'grupo', id: avisoDay.g.id }} date=${avisoDay.ev.date} readOnly=${true} onClose=${() => setAvisoDay(null)} onNew=${() => {}} onEdit=${() => {}} />`}
+      ${avisoDay && html`<${DaySheet} me=${me}
+          ctx=${avisoDay.kind === 'bloqueio' || !(avisoDay.ev.ownerType === 'grupo') ? (avisoDay.kind === 'bloqueio' ? { type:'grupo', id: avisoDay.g.id } : { type:'pessoa', login: me }) : { type:'grupo', id: avisoDay.ev.ownerId }}
+          date=${avisoDay.ev.date} readOnly=${avisoDay.kind === 'bloqueio'} onClose=${() => setAvisoDay(null)}
+          onNew=${() => setAvisoDay(null)} onEdit=${() => setAvisoDay(null)} />`}
 
       <div class="nav"><div class="nav-in glass">
         ${tabs.map(([id, ic, label]) => html`<button key=${id} class=${tab===id?'on':''} onClick=${() => setTab(id)}>
@@ -1243,7 +1654,9 @@ function App() {
     </div>`;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+// Link público das igrejas (?agendar=ID) abre só a página de agendamento, sem login.
+const AGENDAR_ID = new URLSearchParams(location.search).get('agendar');
+ReactDOM.createRoot(document.getElementById('root')).render(AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />` : html`<${App} />`);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
