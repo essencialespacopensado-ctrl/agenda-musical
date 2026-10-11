@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.14';
+const APP_VERSION = '2026-10-11.15';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -403,6 +403,12 @@ function participantsOf(st, ev) {
   return [ev.ownerId];
 }
 const isEnsaio = (ev) => ev && ev.kind === 'ensaio';
+// Tipos de participação (botões no convite das igrejas e no agendamento).
+const PARTS = ['🎤 Louvor ao vivo','🎶 Momento de louvor','💿 Playback','🎵 Mensagem musical','👧 História das crianças','⛪ Culto completo'];
+function PartChips({ value, onChange }) {
+  const v = value || [];
+  return html`<div class="chips" style=${{flexWrap:'wrap'}}>${PARTS.map(p => html`<button type="button" key=${p} class=${'chip ' + (v.includes(p) ? 'on' : '')} style=${v.includes(p) ? {background:'linear-gradient(135deg,#ec4899,#8b5cf6)', borderColor:'#f0abfc', color:'#fff', boxShadow:'0 0 12px -3px rgba(236,72,153,.9)'} : null} onClick=${() => onChange(v.includes(p) ? v.filter(x => x !== p) : [...v, p])}>${v.includes(p) ? '✅ ' : ''}${p}</button>`)}</div>`;
+}
 // Datas de uma recorrência: semanal, quinzenal ou mensal (mesmo dia do mês).
 // Ensaios por semana: dias da semana escolhidos (0=Dom … 6=Sáb), por N semanas, toda semana ou a cada 2.
 function weekDates(start, dias, weeks, every) {
@@ -1174,6 +1180,7 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
           <div style=${{fontWeight:800, fontSize:'15.5px'}}>${evTitle(st, ev)}</div>
           <div class="muted" style=${{marginTop:'3px'}}>${p.ic} ${p.label}${ev.time ? ' · ' + ev.time : ''}</div>
           ${ev.kind !== 'bloqueio' && ev.place && html`<div class="muted">📍 ${ev.place}</div>`}
+          ${(ev.parts || []).length > 0 && html`<div class="chips" style=${{flexWrap:'wrap', marginTop:'4px'}}>${ev.parts.map(p => html`<span key=${p} class="chip on" style=${{cursor:'default'}}>${p}</span>`)}</div>`}
           ${isEnsaio(ev) && ev.focus && html`<div class="muted">🎯 <b>Foco:</b> ${ev.focus}</div>`}
           ${isEnsaio(ev) && html`<${RepertoireView} rep=${ev.repertoire} me=${me} />`}
           ${isEnsaio(ev) && ev.seriesId && html`<div class="dim">🔁 Ensaio recorrente</div>`}
@@ -1397,7 +1404,7 @@ function EventForm({ me, init, onClose }) {
   const editing = init.ev || null;
   const isBlock = editing ? editing.kind === 'bloqueio' : !!init.bloqueio;
   const groups = myGroups(st, me);
-  const defOwner = editing ? (editing.ownerType === 'grupo' ? editing.ownerId : 'solo') : (init.ctx?.type === 'grupo' ? init.ctx.id : 'solo');
+  const defOwner = editing ? (editing.ownerType === 'grupo' ? editing.ownerId : 'solo') : (init.ctx?.type === 'grupo' ? init.ctx.id : (groups[0]?.id || 'solo'));
   const [dr] = useState(() => { const d = readDraft(); return d && d.me === me && (d.editId || null) === (editing?.id || null) && !!d.bloqueio === isBlock ? d : null; });
   const pickD = (k, def) => dr && dr[k] !== undefined ? dr[k] : def;
   const [owner, setOwner] = useState(pickD('owner', defOwner));
@@ -1407,6 +1414,7 @@ function EventForm({ me, init, onClose }) {
   const [place, setPlace] = useState(pickD('place', editing?.place || ''));
   const [notes, setNotes] = useState(pickD('notes', editing?.notes || ''));
   const [status, setStatus] = useState(pickD('status', editing?.status || 'confirmado'));
+  const [parts, setParts] = useState(pickD('parts', editing?.parts || []));
   const [tipo, setTipo] = useState(pickD('tipo', editing ? (editing.kind === 'ensaio' ? 'ensaio' : 'apresentacao') : (init.ensaio ? 'ensaio' : 'apresentacao')));
   const ens = !isBlock && tipo === 'ensaio';
   const [focus, setFocus] = useState(pickD('focus', editing?.focus || ''));
@@ -1421,8 +1429,8 @@ function EventForm({ me, init, onClose }) {
   const [calM, setCalM] = useState(() => { const d = parseYmd(editing?.date || init.date || todayStr()); return new Date(d.getFullYear(), d.getMonth(), 1); });
   useEffect(() => { if (dr) toast('📝 Rascunho recuperado — continue de onde parou'); }, []);
   useEffect(() => {
-    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra });
-  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra]);
+    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra, parts });
+  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, semFim, manual, removed, extra, parts]);
   const closeForm = () => { clearDraft(); onClose(); };
   const [applyNext, setApplyNext] = useState(false);
   const [ask, setAsk] = useState(null);
@@ -1473,7 +1481,7 @@ function EventForm({ me, init, onClose }) {
       kind: isBlock ? 'bloqueio' : 'apresentacao',
       ownerType: isBlock ? 'pessoal' : (g ? 'grupo' : 'solo'),
       ownerId: isBlock || !g ? me : g.id,
-      date, period, time: time || '', place: place.trim(), notes: notes.trim(),
+      date, period, time: time || '', place: place.trim(), notes: notes.trim(), parts: (!isBlock && tipo !== 'ensaio') ? parts : [],
       status: isBlock ? 'confirmado' : status,
       excluded: excluded || (editing && g ? (editing.excluded||[]) : []),
     };
@@ -1568,6 +1576,7 @@ function EventForm({ me, init, onClose }) {
       <div class="lbl">🎵 Repertório e kits de cada música</div>
       <${RepertoireEditor} value=${repert} onChange=${setRepert} />`}
       ${ens && editing && editing.seriesId && html`<label class="row" style=${{gap:'8px', alignItems:'center'}}><input type="checkbox" checked=${applyNext} onChange=${e => setApplyNext(e.target.checked)} /> <span class="muted">Aplicar foco, repertório, local e horário aos próximos ensaios da série</span></label>`}
+      ${!isBlock && !ens && html`<div class="lbl">Tipo de participação</div><${PartChips} value=${parts} onChange=${setParts} />`}
       ${!isBlock && html`<textarea class="inp" rows="2" placeholder="Observação (contato, detalhes…)" value=${notes} onInput=${e => setNotes(e.target.value)}></textarea>`}
       ${!isBlock && !ens && html`<div class="seg">
         <button class=${status==='confirmado'?'on':''} onClick=${() => setStatus('confirmado')}>🔵 Confirmado</button>
@@ -2221,6 +2230,7 @@ function BookingForm({ g, date, onClose, onDone }) {
   const free = PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) !== 'busy');
   const [period, setPeriod] = useState(free.find(p => p.id === 'noite')?.id || free[0]?.id || 'noite');
   const [f, setF] = useState({ name:'', contact:'', phone:'', address:'', time:'', notes:'' });
+  const [parts, setParts] = useState([]);
   const up = (k) => (e) => setF(o => ({ ...o, [k]: e.target.value }));
   const [quote, setQuote] = useState(null);
   const [err, setErr] = useState('');
@@ -2241,12 +2251,13 @@ function BookingForm({ g, date, onClose, onDone }) {
     if (!f.name.trim()) return setErr('Informe o nome da igreja.');
     if (!f.contact.trim() || onlyDigits(f.phone).length < 10) return setErr('Informe o nome e o WhatsApp (com DDD) de quem está agendando.');
     if (!f.address.trim()) return setErr('Informe o endereço da igreja.');
+    if (!parts.length) return setErr('Escolha o tipo de participação.');
     setBusy(true);
     let q = quote && !quote.loading && !quote.failed ? quote : (hasCost ? await calc() : null);
     const id = uid('ev');
     const ev = {
       id, kind:'apresentacao', ownerType: g.__solo ? 'solo' : 'grupo', ownerId:g.id, date, period, time: f.time || '',
-      place: f.name.trim(), notes: f.notes.trim(), status:'pendente', source:'igreja', excluded:[],
+      place: f.name.trim(), notes: f.notes.trim(), parts, status:'pendente', source:'igreja', excluded:[],
       createdBy: '__igreja__', createdAt: Date.now(),
       church: { name: f.name.trim(), contact: f.contact.trim(), phone: f.phone.trim(), address: f.address.trim(),
         km: q ? Math.round(q.km * 10) / 10 : 0, cost: q ? Math.round(q.total * 100) / 100 : 0 },
@@ -2266,6 +2277,8 @@ function BookingForm({ g, date, onClose, onDone }) {
       <div class="dim">${PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) === 'busy').map(p => p.label).join(', ') ? '⛔ Indisponível: ' + PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) === 'busy').map(p => p.label.toLowerCase()).join(', ') + '.' : ''}</div>
       ${avail === 'busy' && html`<div class="err">⛔ Esse período está indisponível. Escolha outro período ou outra data.</div>`}
       <input class="inp" type="time" value=${f.time} onInput=${up('time')} />
+      <div class="lbl">Tipo de participação</div>
+      <${PartChips} value=${parts} onChange=${setParts} />
       <div class="lbl">Sua igreja</div>
       <input class="inp" placeholder="Nome da igreja" value=${f.name} onInput=${up('name')} />
       <input class="inp" placeholder="Endereço (rua, número, cidade - UF)" value=${f.address} onInput=${e => { up('address')(e); setQuote(null); }} onBlur=${calc} />
@@ -2303,7 +2316,7 @@ async function notify(title, body) {
 }
 function avisoText(st, a) {
   if (a.kind === 'resp') return ['💡 Resposta à sua sugestão', a.sug.reply];
-  if (a.kind === 'pedido') return ['⛪ Novo pedido: ' + a.g.name, (a.ev.church?.name || 'Uma igreja') + ' quer agendar em ' + fmtDate(a.ev.date) + ' (' + (PER[a.ev.period]?.label || '') + ')'];
+  if (a.kind === 'pedido') return ['⛪ Novo pedido: ' + a.g.name, (a.ev.church?.name || 'Uma igreja') + ' quer agendar em ' + fmtDate(a.ev.date) + ' (' + (PER[a.ev.period]?.label || '') + ')' + ((a.ev.parts || []).length ? ' · ' + a.ev.parts.map(p => p.replace(/^\S+\s/, '')).join(', ') : '')];
   if (a.kind === 'obs') return ['💬 ' + cantorName(st, a.obs.by) + (a.g ? ' · ' + a.g.name : ''), a.obs.text];
   if (a.kind === 'novo' && isEnsaio(a.ev)) return ['🎼 ' + a.g.name + ': ' + (a.ev.extra ? '⭐ ensaio extra' : a.ev.seriesId ? 'ensaios marcados' : 'novo ensaio'), (a.ev.extra ? '' : 'A partir de ') + fmtDateLong(a.ev.date) + (a.ev.focus ? ' · foco: ' + a.ev.focus : '') + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
   if (a.kind === 'novo') return ['📅 ' + a.g.name + ': nova apresentação', fmtDateLong(a.ev.date) + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
