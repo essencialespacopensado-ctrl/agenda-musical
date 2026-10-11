@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.06';
+const APP_VERSION = '2026-10-11.07';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -238,6 +238,16 @@ function soloTarget(st, login) {
   if (!c || c.removed || c.paused) return null;
   return { id: login, __solo: true, name: c.name, color: SOLO_COLOR, tipo: 'Solo', members: [login], cost: c.cost, logo: c.photo };
 }
+// Compartilhar: no celular abre a lista de apps (WhatsApp, Instagram…); no computador abre o WhatsApp Web.
+async function shareLink(title, text, url) {
+  if (navigator.share) {
+    try { await navigator.share({ title, text, url }); return; } catch(e) { if (e && e.name === 'AbortError') return; }
+  }
+  window.open('https://wa.me/?text=' + encodeURIComponent(text + '\n' + url), '_blank');
+}
+const shareGroup = (g) => shareLink(g.name + ' — agenda', 'Agende uma apresentação do ' + g.name + ' na sua igreja. Veja as datas livres e o custo do deslocamento:', bookingLink(g.id));
+const shareSolo = (name, login) => shareLink(name + ' — agenda', 'Convide ' + name + ' para cantar na sua igreja. Veja as datas livres e o custo do deslocamento:', soloLink(login));
+const appLink = () => location.origin + location.pathname;
 async function copyText(text, okMsg) {
   try { await navigator.clipboard.writeText(text); toast(okMsg); } catch(e) { prompt('Copie o link:', text); }
 }
@@ -811,6 +821,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
         <button class="btn" onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx })}>➕ Agendar apresentação</button>
         ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setForm({ date: today, ctx, bloqueio:true })}>🚫 Bloquear dia</button>`}
       </div>`}
+      ${me && html`<button class="btn2" style=${{background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareAgenda(st, ctx, me)}>📤 Compartilhar agenda (imagem)</button>`}
 
       <div>
         <div class="lbl" style=${{marginBottom:'8px'}}>Próximos compromissos</div>
@@ -834,6 +845,71 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
           onEdit=${(ev) => { setDay(null); setForm({ ev, ctx }); }} />`}
       ${form && html`<${EventForm} me=${me} init=${form} onClose=${() => setForm(null)} />`}
     </div>`;
+}
+
+// ---------- COMPARTILHAR A AGENDA MONTADA (imagem) ----------
+function loadImg(src) { return new Promise((res) => { if (!src) return res(null); const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; }); }
+async function shareAgenda(st, ctx, me) {
+  const today = todayStr();
+  let title, sub, color, logo, list;
+  if (ctx.type === 'grupo') {
+    const g = st.grupos[ctx.id]; if (!g) return;
+    title = g.name; sub = g.tipo + ' · ' + (g.members || []).map(m => cantorName(st, m).split(' ')[0]).join(', ');
+    color = g.color || '#8b5cf6'; logo = g.logo;
+    list = allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today && e.status !== 'pendente');
+  } else {
+    const c = st.cantores[me] || {};
+    title = c.name || 'Minha agenda'; sub = 'Agenda de apresentações'; color = SOLO_COLOR; logo = c.photo;
+    list = eventsOfPerson(st, me).filter(e => e.date >= today && e.kind !== 'bloqueio' && e.status !== 'pendente');
+  }
+  list.sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
+  list = list.slice(0, 10);
+  if (!list.length) { toast('Ainda não há apresentações confirmadas pra compartilhar.'); return; }
+
+  const W = 1080, rowH = 118, top = 330, H = top + list.length * rowH + 150;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const x = cv.getContext('2d');
+  const bg = x.createLinearGradient(0, 0, W, H); bg.addColorStop(0, '#0b1120'); bg.addColorStop(1, '#1e1035');
+  x.fillStyle = bg; x.fillRect(0, 0, W, H);
+  const glow = x.createRadialGradient(W, 0, 50, W, 0, 700); glow.addColorStop(0, color + '88'); glow.addColorStop(1, 'transparent');
+  x.fillStyle = glow; x.fillRect(0, 0, W, H);
+  const rr = (X, Y, w, h, r) => { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r); x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r); x.arcTo(X, Y, X + w, Y, r); x.closePath(); };
+  // cabeçalho
+  const img = await loadImg(logo);
+  x.save(); x.beginPath(); x.arc(150, 160, 90, 0, Math.PI * 2); x.closePath(); x.clip();
+  if (img) { const k = Math.max(180 / img.width, 180 / img.height); x.drawImage(img, 150 - img.width * k / 2, 160 - img.height * k / 2, img.width * k, img.height * k); }
+  else { x.fillStyle = color; x.fillRect(60, 70, 180, 180); x.fillStyle = '#fff'; x.font = 'bold 72px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(initials(title), 150, 165); }
+  x.restore();
+  x.textAlign = 'left'; x.textBaseline = 'alphabetic';
+  x.fillStyle = '#ffffff'; x.font = 'bold 58px sans-serif'; x.fillText(title.length > 26 ? title.slice(0, 25) + '…' : title, 280, 150);
+  x.fillStyle = '#cbd5e1'; x.font = '32px sans-serif'; x.fillText(sub.length > 48 ? sub.slice(0, 47) + '…' : sub, 280, 200);
+  x.fillStyle = color; x.font = 'bold 30px sans-serif'; x.fillText('🎶 PRÓXIMAS APRESENTAÇÕES', 60, 300);
+  // linhas
+  list.forEach((e, i) => {
+    const y = top + i * rowH, d = parseYmd(e.date), p = PER[e.period] || PER.dia;
+    x.fillStyle = 'rgba(255,255,255,0.06)'; rr(50, y, W - 100, rowH - 18, 24); x.fill();
+    x.fillStyle = color; rr(50, y, 12, rowH - 18, 6); x.fill();
+    x.fillStyle = '#fff'; x.font = 'bold 54px sans-serif'; x.textAlign = 'center'; x.fillText(String(d.getDate()), 150, y + 62);
+    x.fillStyle = '#94a3b8'; x.font = 'bold 22px sans-serif'; x.fillText(MESES[d.getMonth()].slice(0, 3).toUpperCase() + ' · ' + DOW_LONG[d.getDay()].slice(0, 3).toUpperCase(), 150, y + 90);
+    x.textAlign = 'left';
+    const who = ctx.type === 'grupo' ? '' : (e.ownerType === 'grupo' ? ownerName(st, e) : 'Solo');
+    const line1 = (e.place || 'Local a definir') ; const line2 = p.label + (e.time ? ' · ' + e.time : '') + (who ? ' · ' + who : '');
+    x.fillStyle = '#fff'; x.font = 'bold 36px sans-serif'; x.fillText(line1.length > 36 ? line1.slice(0, 35) + '…' : line1, 240, y + 52);
+    x.fillStyle = '#cbd5e1'; x.font = '28px sans-serif'; x.fillText(line2.length > 48 ? line2.slice(0, 47) + '…' : line2, 240, y + 88);
+  });
+  x.fillStyle = '#64748b'; x.font = '26px sans-serif'; x.textAlign = 'center';
+  x.fillText('Agenda Musical · atualizada em ' + fmtDate(today), W / 2, H - 60);
+
+  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+  const file = new File([blob], 'agenda-' + normLogin(title) + '.png', { type: 'image/png' });
+  const text = '🎶 Agenda — ' + title + '\n' + list.map(e => '• ' + fmtDate(e.date) + ' ' + (PER[e.period]||PER.dia).label + (e.place ? ' — ' + e.place : '')).join('\n');
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Agenda — ' + title, text }); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  // Computador: baixa a imagem e abre o WhatsApp com o texto da agenda.
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  toast('Imagem da agenda baixada 📥');
+  setTimeout(() => window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'), 600);
 }
 
 // Banner que aparece logo que a pessoa entra: próximos compromissos + pedidos esperando.
@@ -1142,8 +1218,9 @@ function SoloCard({ me }) {
     <div class="dim">${t.cost?.valorKm ? 'Saída: ' + (t.cost.origem || '—') + ' · ' + brl(t.cost.valorKm) + '/km' + (t.cost.idaVolta === false ? ' (só ida)' : ' (ida e volta)') : 'Configure seus custos de deslocamento pra igreja já ver o valor ao te convidar.'}</div>
     <div class="row" style=${{gap:'6px'}}>
       <button class="btn2" style=${{flex:1}} onClick=${() => setCosts(true)}>💰 Custos</button>
-      <button class="btn2" style=${{flex:1}} onClick=${() => copyText(soloLink(me), 'Seu link solo foi copiado! 🔗')}>🔗 Copiar link</button>
-      <a class="btn2" style=${{textDecoration:'none', textAlign:'center'}} href=${soloLink(me)} target="_blank">👁️</a>
+      <button class="btn2" style=${{flex:1, background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareSolo(t.name, me)}>📤 Compartilhar</button>
+      <button class="btn2" title="Copiar link" onClick=${() => copyText(soloLink(me), 'Seu link solo foi copiado! 🔗')}>🔗</button>
+      <a class="btn2" title="Ver como a igreja vê" style=${{textDecoration:'none', textAlign:'center'}} href=${soloLink(me)} target="_blank">👁️</a>
     </div>
     ${costs && html`<${CostForm} g=${t} me=${me} onClose=${() => setCosts(false)} />`}
   </div>`;
@@ -1158,7 +1235,10 @@ function GroupsView({ me, openAgenda }) {
   const nextOf = (g) => allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today).sort((a,b) => a.date.localeCompare(b.date))[0];
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
     <${SoloCard} me=${me} />
-    <button class="btn" onClick=${() => setEdit({})}>➕ Criar grupo</button>
+    <div class="row" style=${{gap:'8px'}}>
+      <button class="btn" onClick=${() => setEdit({})}>➕ Criar grupo</button>
+      <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => shareLink('Agenda Musical', 'Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos:', appLink())}>📤 Convidar cantores</button>
+    </div>
     ${groups.length === 0 && html`<div class="glass card muted">Você ainda não está em nenhum grupo. Crie um ou peça pra alguém do grupo te adicionar.</div>`}
     <div class="list">
       ${groups.map(g => { const n = nextOf(g); return html`<button key=${g.id} class="item" style=${{borderLeft:'5px solid ' + g.color}} onClick=${() => setOpen(g.id)}>
@@ -1247,8 +1327,9 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
         <div class="dim">${g.cost?.valorKm ? 'Saída: ' + (g.cost.origem || '—') + ' · ' + brl(g.cost.valorKm) + '/km' + (g.cost.idaVolta === false ? ' (só ida)' : ' (ida e volta)') : 'Configure os custos de deslocamento pra igreja já ver o valor ao agendar.'}</div>
         <div class="row" style=${{gap:'6px'}}>
           <button class="btn2" style=${{flex:1}} onClick=${() => setCosts(true)}>💰 Custos</button>
-          <button class="btn2" style=${{flex:1}} onClick=${copyLink}>🔗 Copiar link</button>
-          <a class="btn2" style=${{textDecoration:'none', textAlign:'center'}} href=${bookingLink(g.id)} target="_blank">👁️</a>
+          <button class="btn2" style=${{flex:1, background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareGroup(g)}>📤 Compartilhar</button>
+          <button class="btn2" title="Copiar link" onClick=${copyLink}>🔗</button>
+          <a class="btn2" title="Ver como a igreja vê" style=${{textDecoration:'none', textAlign:'center'}} href=${bookingLink(g.id)} target="_blank">👁️</a>
         </div>
       </div>
       <div class="lbl">Integrantes (${members.length})</div>
