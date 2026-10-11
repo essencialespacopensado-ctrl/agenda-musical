@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.07';
+const APP_VERSION = '2026-10-11.08';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -854,7 +854,7 @@ async function shareAgenda(st, ctx, me) {
   let title, sub, color, logo, list;
   if (ctx.type === 'grupo') {
     const g = st.grupos[ctx.id]; if (!g) return;
-    title = g.name; sub = g.tipo + ' · ' + (g.members || []).map(m => cantorName(st, m).split(' ')[0]).join(', ');
+    title = g.name; sub = (g.tipo || 'Grupo') + ' · Agenda de apresentações';
     color = g.color || '#8b5cf6'; logo = g.logo;
     list = allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today && e.status !== 'pendente');
   } else {
@@ -1656,7 +1656,7 @@ function PublicBooking({ gid, solo }) {
     <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
       <div style=${{display:'flex', justifyContent:'center', marginBottom:'8px'}}><${Avatar} name=${g.name} color=${g.color} img=${g.logo} size=${72} /></div>
       <div style=${{fontWeight:900, fontSize:'21px'}}>${g.name}</div>
-      <div class="muted">${g.__solo ? '🎙️ Apresentação solo' : g.tipo + (members ? ' · ' + members : '')}</div>
+      <div class="muted">${g.__solo ? '🎙️ Apresentação solo' : (g.tipo || 'Grupo')}</div>
       <div class="dim" style=${{marginTop:'6px'}}>${g.__solo ? 'Escolha uma data livre para convidar ' + g.name.split(' ')[0] + ' para cantar na sua igreja.' : 'Escolha uma data livre para convidar o grupo para a sua igreja.'}</div>
     </div>
     <div class="glass card">
