@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.02';
+const APP_VERSION = '2026-10-11.03';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -231,6 +231,16 @@ async function quoteFor(cfg, destino) {
 }
 const mapsLink = (from, to) => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + encodeURIComponent(from || '') + '&destination=' + encodeURIComponent(to || '');
 const bookingLink = (gid) => location.origin + location.pathname + '?agendar=' + encodeURIComponent(gid);
+const soloLink = (login) => location.origin + location.pathname + '?solo=' + encodeURIComponent(login);
+// O cantor solo é tratado como um "grupo de uma pessoa só" nas telas de agendamento público.
+function soloTarget(st, login) {
+  const c = st.cantores[login];
+  if (!c || c.removed || c.paused) return null;
+  return { id: login, __solo: true, name: c.name, color: SOLO_COLOR, tipo: 'Solo', members: [login], cost: c.cost };
+}
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); toast(okMsg); } catch(e) { prompt('Copie o link:', text); }
+}
 
 // ---------- banco de dados (nuvem + cópia local) ----------
 // Tudo que é mudado vai direto pra nuvem (Firestore) — não existe botão "Salvar geral".
@@ -398,10 +408,11 @@ function conflictsFor(st, logins, date, period, ignoreId) {
 // Situação de um grupo num dia: compromisso do próprio grupo e integrantes ocupados em outra coisa.
 function groupDay(st, g, date) {
   const evs = eventsOn(st, date);
-  const own = evs.filter(e => e.ownerType === 'grupo' && e.ownerId === g.id);
+  const isOwn = (e) => g.__solo ? (e.ownerType === 'solo' && e.ownerId === g.id) : (e.ownerType === 'grupo' && e.ownerId === g.id);
+  const own = evs.filter(isOwn);
   const busy = [];
   evs.forEach(e => {
-    if ((e.ownerType === 'grupo' && e.ownerId === g.id) || isChurchPending(e)) return;
+    if (isOwn(e) || isChurchPending(e)) return;
     const parts = participantsOf(st, e);
     (g.members||[]).forEach(m => { if (parts.includes(m)) busy.push({ login:m, ev:e }); });
   });
@@ -433,6 +444,9 @@ function buildAvisos(st, login) {
     if (e.date < today || e.status === 'recusado') return;
     const parts = participantsOf(st, e);
     // Observações de outras pessoas em compromissos de que eu participo.
+    if (e.source === 'igreja' && e.ownerType === 'solo' && e.ownerId === login) {
+      out.push({ id: e.id + '|solo', kind:'pedido', g: { name:'Solo', color: SOLO_COLOR }, ev:e, at:e.createdAt||0 });
+    }
     if (parts.includes(login)) {
       (e.obs || []).forEach((o, i) => {
         if (o.by !== login) out.push({ id: e.id + '|obs|' + i + '|' + o.at, kind:'obs', ev:e, obs:o, g: e.ownerType === 'grupo' ? st.grupos[e.ownerId] : null, at:o.at || 0 });
@@ -805,8 +819,8 @@ function EventRow({ ev, onClick }) {
 function ChurchInfo({ ev }) {
   const st = useStore();
   const c = ev.church || {};
-  const g = st.grupos[ev.ownerId];
-  const wa = waLink(c.phone, 'Olá! Aqui é do ' + (g?.name || 'grupo') + ', sobre o pedido de apresentação no dia ' + fmtDate(ev.date) + '.');
+  const g = ev.ownerType === 'grupo' ? st.grupos[ev.ownerId] : soloTarget(st, ev.ownerId);
+  const wa = waLink(c.phone, 'Olá! Aqui é do ' + (ev.ownerType === 'grupo' ? (g?.name || 'grupo') : (g?.name || 'cantor')) + ', sobre o pedido de apresentação no dia ' + fmtDate(ev.date) + '.');
   return html`<div style=${{marginTop:'8px', padding:'10px', borderRadius:'12px', background:'rgba(148,163,184,.08)', display:'grid', gap:'3px'}}>
     <div style=${{fontWeight:800}}>⛪ ${c.name || 'Igreja'}</div>
     ${c.contact && html`<div class="muted">👤 ${c.contact}${c.phone ? ' · ' + c.phone : ''}</div>`}
@@ -1011,6 +1025,24 @@ function EventForm({ me, init, onClose }) {
 }
 
 // ---------- GRUPOS ----------
+// Link e custos do cantor como SOLO (cada integrante tem o seu).
+function SoloCard({ me }) {
+  const st = useStore();
+  const t = soloTarget(st, me);
+  const [costs, setCosts] = useState(false);
+  if (!t) return null;
+  return html`<div class="glass card" style=${{display:'grid', gap:'8px', padding:'12px', borderLeft:'5px solid ' + SOLO_COLOR}}>
+    <div style=${{fontWeight:800}}>🎙️ Minha agenda solo — link para igrejas</div>
+    <div class="dim">${t.cost?.valorKm ? 'Saída: ' + (t.cost.origem || '—') + ' · ' + brl(t.cost.valorKm) + '/km' + (t.cost.idaVolta === false ? ' (só ida)' : ' (ida e volta)') : 'Configure seus custos de deslocamento pra igreja já ver o valor ao te convidar.'}</div>
+    <div class="row" style=${{gap:'6px'}}>
+      <button class="btn2" style=${{flex:1}} onClick=${() => setCosts(true)}>💰 Custos</button>
+      <button class="btn2" style=${{flex:1}} onClick=${() => copyText(soloLink(me), 'Seu link solo foi copiado! 🔗')}>🔗 Copiar link</button>
+      <a class="btn2" style=${{textDecoration:'none', textAlign:'center'}} href=${soloLink(me)} target="_blank">👁️</a>
+    </div>
+    ${costs && html`<${CostForm} g=${t} me=${me} onClose=${() => setCosts(false)} />`}
+  </div>`;
+}
+
 function GroupsView({ me, openAgenda }) {
   const st = useStore();
   const groups = myGroups(st, me);
@@ -1019,6 +1051,7 @@ function GroupsView({ me, openAgenda }) {
   const today = todayStr();
   const nextOf = (g) => allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today).sort((a,b) => a.date.localeCompare(b.date))[0];
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
+    <${SoloCard} me=${me} />
     <button class="btn" onClick=${() => setEdit({})}>➕ Criar grupo</button>
     ${groups.length === 0 && html`<div class="glass card muted">Você ainda não está em nenhum grupo. Crie um ou peça pra alguém do grupo te adicionar.</div>`}
     <div class="list">
@@ -1073,11 +1106,7 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
   const [q, setQ] = useState('');
   const isLeader = g.leader === me;
   const [costs, setCosts] = useState(false);
-  const copyLink = async () => {
-    const link = bookingLink(g.id);
-    try { await navigator.clipboard.writeText(link); toast('Link copiado! Mande pras igrejas 🔗'); }
-    catch(e) { prompt('Copie o link do grupo:', link); }
-  };
+  const copyLink = () => copyText(bookingLink(g.id), 'Link do grupo copiado! Mande pras igrejas 🔗');
   const members = (g.members||[]);
   const candidates = activeCantores(st).filter(c => !members.includes(c.id) && (!q || c.name.toLowerCase().includes(q.toLowerCase()))).sort((a,b) => a.name.localeCompare(b.name,'pt-BR'));
   const add = async (login) => { await Store.update('grupos', g.id, { members: [...members, login] }); toast(cantorName(st, login) + ' entrou no grupo'); Store.log('integrante', cantorName(st, me), cantorName(st, login) + ' → ' + g.name); };
@@ -1161,7 +1190,7 @@ function CostForm({ g, me, onClose }) {
     setBusy(true);
     let geo = null;
     try { geo = await geocode(origem); } catch(e) { setBusy(false); return setErr('Não achei esse endereço no mapa. Tente "Rua, número, cidade - UF" ou só "Cidade - UF".'); }
-    await Store.update('grupos', g.id, { cost: { origem: origem.trim(), lat: geo.lat, lon: geo.lon, valorKm: cfg.valorKm, idaVolta, extra: cfg.extra, extraLabel: extraLabel.trim(), minimo: cfg.minimo, obs: obs.trim(), updatedBy: me } });
+    await Store.update(g.__solo ? 'cantores' : 'grupos', g.id, { cost: { origem: origem.trim(), lat: geo.lat, lon: geo.lon, valorKm: cfg.valorKm, idaVolta, extra: cfg.extra, extraLabel: extraLabel.trim(), minimo: cfg.minimo, obs: obs.trim(), updatedBy: me } });
     setBusy(false);
     toast('Custos salvos ✅');
     onClose();
@@ -1174,7 +1203,7 @@ function CostForm({ g, me, onClose }) {
     catch(e) { setTestRes(null); setErr('Não consegui calcular essa rota. Confira os dois endereços.'); }
   };
 
-  return html`<${Sheet} title=${'💰 Custos — ' + g.name} onClose=${onClose}>
+  return html`<${Sheet} title=${'💰 Custos — ' + (g.__solo ? 'Solo' : g.name)} onClose=${onClose}>
     <div style=${{display:'grid', gap:'10px'}}>
       ${err && html`<div class="err">${err}</div>`}
       <div class="lbl">De onde o grupo sai</div>
@@ -1393,10 +1422,10 @@ function DevView() {
 }
 
 // ---------- PÁGINA PÚBLICA: IGREJA AGENDA O GRUPO (sem login) ----------
-function PublicBooking({ gid }) {
+function PublicBooking({ gid, solo }) {
   const st = useStore();
   const status = useStatus();
-  const g = st.grupos[gid];
+  const g = solo ? soloTarget(st, gid) : st.grupos[gid];
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [day, setDay] = useState(null);
   const [done, setDone] = useState(null);
@@ -1424,7 +1453,7 @@ function PublicBooking({ gid }) {
     <div class="glass card" style=${{display:'grid', gap:'10px', textAlign:'center'}}>
       <div style=${{fontSize:'44px'}}>✅</div>
       <div style=${{fontWeight:900, fontSize:'18px'}}>Pedido enviado!</div>
-      <div class="muted">O ${g.name} recebeu seu pedido para <b>${fmtDateLong(done.date)}</b> (${PER[done.period].label}). Eles vão confirmar com você${done.church.phone ? ' pelo WhatsApp' : ''}.</div>
+      <div class="muted">${g.__solo ? '' : 'O '}${g.name} recebeu seu pedido para <b>${fmtDateLong(done.date)}</b> (${PER[done.period].label}). ${g.__solo ? g.name.split(' ')[0] + ' vai confirmar' : 'Eles vão confirmar'} com você${done.church.phone ? ' pelo WhatsApp' : ''}.</div>
       ${done.church.km ? html`<div class="okbox">🚗 ${done.church.km.toFixed(0)} km · deslocamento estimado: <b>${brl(done.church.cost)}</b></div>` : null}
       <button class="btn2" onClick=${() => setDone(null)}>Fazer outro pedido</button>
     </div>
@@ -1434,8 +1463,8 @@ function PublicBooking({ gid }) {
     <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
       <div class="avatar" style=${{width:'58px', height:'58px', fontSize:'22px', background:g.color, margin:'0 auto 8px'}}>${initials(g.name)}</div>
       <div style=${{fontWeight:900, fontSize:'21px'}}>${g.name}</div>
-      <div class="muted">${g.tipo}${members ? ' · ' + members : ''}</div>
-      <div class="dim" style=${{marginTop:'6px'}}>Escolha uma data livre para convidar o grupo para a sua igreja.</div>
+      <div class="muted">${g.__solo ? '🎙️ Apresentação solo' : g.tipo + (members ? ' · ' + members : '')}</div>
+      <div class="dim" style=${{marginTop:'6px'}}>${g.__solo ? 'Escolha uma data livre para convidar ' + g.name.split(' ')[0] + ' para cantar na sua igreja.' : 'Escolha uma data livre para convidar o grupo para a sua igreja.'}</div>
     </div>
     <div class="glass card">
       <${Calendar} month=${month} setMonth=${setMonth} renderDay=${dayInfo} onPick=${pick} />
@@ -1486,7 +1515,7 @@ function BookingForm({ g, date, onClose, onDone }) {
     let q = quote && !quote.loading && !quote.failed ? quote : (hasCost ? await calc() : null);
     const id = uid('ev');
     const ev = {
-      id, kind:'apresentacao', ownerType:'grupo', ownerId:g.id, date, period, time: f.time || '',
+      id, kind:'apresentacao', ownerType: g.__solo ? 'solo' : 'grupo', ownerId:g.id, date, period, time: f.time || '',
       place: f.name.trim(), notes: f.notes.trim(), status:'pendente', source:'igreja', excluded:[],
       createdBy: '__igreja__', createdAt: Date.now(),
       church: { name: f.name.trim(), contact: f.contact.trim(), phone: f.phone.trim(), address: f.address.trim(),
@@ -1655,8 +1684,12 @@ function App() {
 }
 
 // Link público das igrejas (?agendar=ID) abre só a página de agendamento, sem login.
-const AGENDAR_ID = new URLSearchParams(location.search).get('agendar');
-ReactDOM.createRoot(document.getElementById('root')).render(AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />` : html`<${App} />`);
+const QS = new URLSearchParams(location.search);
+const AGENDAR_ID = QS.get('agendar'), SOLO_ID = QS.get('solo');
+ReactDOM.createRoot(document.getElementById('root')).render(
+  AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />`
+  : SOLO_ID ? html`<${PublicBooking} gid=${SOLO_ID} solo=${true} />`
+  : html`<${App} />`);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
