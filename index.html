@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.05';
+const APP_VERSION = '2026-10-11.06';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -399,7 +399,7 @@ const isChurchPending = (ev) => ev.source === 'igreja' && ev.status === 'pendent
 function conflictsFor(st, logins, date, period, ignoreId) {
   const out = [];
   eventsOn(st, date).forEach(e => {
-    if (e.id === ignoreId || !overlap(e.period, period) || isChurchPending(e)) return;
+    if (e.id === ignoreId || !overlap(e.period, period)) return;
     const parts = participantsOf(st, e);
     logins.forEach(l => { if (parts.includes(l)) out.push({ login:l, ev:e }); });
   });
@@ -419,13 +419,12 @@ function groupDay(st, g, date) {
   return { own, busy };
 }
 // Situação pública (página das igrejas): só "livre / a confirmar / indisponível", sem detalhes.
+// Página das igrejas: qualquer compromisso já marcado (confirmado OU só pedido, aguardando)
+// do grupo/cantor ou de qualquer integrante deixa aquele período "Indisponível".
 function publicDay(st, g, date, period) {
-  const { own, busy } = groupDay(st, g, date);
-  const hit = (list) => list.filter(x => !period || overlap((x.ev || x).period, period));
-  const o = hit(own.filter(e => e.status !== 'recusado'));
-  if (o.some(e => !isChurchPending(e)) || hit(busy).length) return 'busy';
-  if (o.length) return 'maybe';
-  return 'free';
+  const members = g.members || [];
+  const taken = eventsOn(st, date).some(e => (!period || overlap(e.period, period)) && participantsOf(st, e).some(m => members.includes(m)));
+  return taken ? 'busy' : 'free';
 }
 function describeEv(st, ev) {
   const p = PER[ev.period] || PER.dia;
@@ -1558,7 +1557,7 @@ function PublicBooking({ gid, solo }) {
     if (per.every(x => x === 'busy')) return { cls:'st-busy' };
     return { cls:'st-maybe' };
   };
-  const pick = (s) => { if (s < today) return; if (dayInfo(s).cls === 'st-busy') { toast('Esse dia está indisponível. Escolha outro.'); return; } setDay(s); };
+  const pick = (s) => { if (s < today) return; if (dayInfo(s).cls === 'st-busy') { toast('⛔ Data indisponível. Escolha outra.'); return; } setDay(s); };
   const members = (g.members || []).map(m => cantorName(st, m).split(' ')[0]).join(', ');
 
   if (done) return html`<div class="app">
@@ -1583,7 +1582,7 @@ function PublicBooking({ gid, solo }) {
       <${Calendar} month=${month} setMonth=${setMonth} renderDay=${dayInfo} onPick=${pick} />
       <div class="legend">
         <span><i class="sq" style=${{background:'rgba(16,185,129,.5)'}}></i>Livre</span>
-        <span><i class="sq" style=${{background:'var(--maybe)'}}></i>Parcial / a confirmar</span>
+        <span><i class="sq" style=${{background:'var(--maybe)'}}></i>Parte do dia ocupada</span>
         <span><i class="sq" style=${{background:'var(--busy)'}}></i>Indisponível</span>
       </div>
     </div>
@@ -1645,8 +1644,9 @@ function BookingForm({ g, date, onClose, onDone }) {
     <div style=${{display:'grid', gap:'10px'}}>
       ${err && html`<div class="err">${err}</div>`}
       <div class="lbl">Período</div>
-      <div class="seg">${PERIODOS.filter(p => p.id !== 'dia').map(p => { const s = publicDay(st, g, date, p.id); return html`<button key=${p.id} class=${period===p.id?'on':''} disabled=${s === 'busy'} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}${s === 'busy' ? ' ✖' : ''}</button>`; })}</div>
-      ${avail === 'maybe' && html`<div class="warnbox">🟡 Já existe outro pedido aguardando confirmação nesse período. Você pode enviar o seu mesmo assim.</div>`}
+      <div class="seg">${PERIODOS.filter(p => p.id !== 'dia').map(p => { const s = publicDay(st, g, date, p.id); return html`<button key=${p.id} class=${period===p.id?'on':''} disabled=${s === 'busy'} onClick=${() => setPeriod(p.id)}>${s === 'busy' ? '⛔ ' + p.label : p.ic + ' ' + p.label}</button>`; })}</div>
+      <div class="dim">${PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) === 'busy').map(p => p.label).join(', ') ? '⛔ Indisponível: ' + PERIODOS.filter(p => p.id !== 'dia' && publicDay(st, g, date, p.id) === 'busy').map(p => p.label.toLowerCase()).join(', ') + '.' : ''}</div>
+      ${avail === 'busy' && html`<div class="err">⛔ Esse período está indisponível. Escolha outro período ou outra data.</div>`}
       <input class="inp" type="time" value=${f.time} onInput=${up('time')} />
       <div class="lbl">Sua igreja</div>
       <input class="inp" placeholder="Nome da igreja" value=${f.name} onInput=${up('name')} />
