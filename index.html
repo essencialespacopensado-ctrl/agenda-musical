@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.13';
+const APP_VERSION = '2026-10-11.14';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -444,6 +444,8 @@ function ownerColor(st, ev) {
   return SOLO_COLOR;
 }
 function cantorName(st, login) { return st.cantores[login]?.name || login; }
+// Como a pessoa gosta de ser chamada (apelido); se não preencheu, o primeiro nome.
+const callName = (st, login) => (st.cantores[login]?.apelido || '').trim() || (cantorName(st, login) || '').split(' ')[0];
 const allEvents = (st) => Object.values(st.eventos).filter(e => e.date && e.status !== 'recusado');
 const eventsOn = (st, date) => allEvents(st).filter(e => e.date === date);
 
@@ -640,7 +642,7 @@ function LoginScreen({ onLogin }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
-  const [f, setF] = useState({ name:'', phone:'', login:'', pass:'', q:'', a:'' });
+  const [f, setF] = useState({ name:'', apelido:'', phone:'', login:'', pass:'', q:'', a:'' });
   const [acct, setAcct] = useState(() => { try { const v = localStorage.getItem('am_reg_group'); if (v) { localStorage.removeItem('am_reg_group'); return 'grupo'; } } catch(e) {} return 'cantor'; });
   const [gTipo, setGTipo] = useState('Quarteto');
   useEffect(() => { if (acct === 'grupo') setMode('register'); }, []);
@@ -674,7 +676,7 @@ function LoginScreen({ onLogin }) {
     setBusy(true);
     const gid = acct === 'grupo' ? uid('gr') : null;
     const r = await Store.createCantor(login, {
-      name: f.name.trim(), phone: f.phone.trim(), login,
+      name: f.name.trim(), apelido: acct === 'grupo' ? '' : f.apelido.trim(), phone: f.phone.trim(), login,
       passHash: simpleHash(f.pass), q: f.q.trim(), aHash: simpleHash(f.a.trim().toLowerCase()),
       createdAt: Date.now(), removed:false, paused:false,
       ...(gid ? { isGroup:true, groupId: gid } : {})
@@ -720,6 +722,7 @@ function LoginScreen({ onLogin }) {
               ${acct === 'grupo' && html`<div class="dim">Primeiro crie a conta do grupo. Depois, dentro dela, você adiciona os integrantes (cada um com a conta de cantor dele).</div>`}
               <div class="lbl">${acct === 'grupo' ? 'Dados do grupo' : 'Seus dados'}</div>
               <input class="inp" placeholder=${acct === 'grupo' ? 'Nome do grupo' : 'Nome (como os grupos te conhecem)'} value=${f.name} onInput=${up('name')} autoFocus />
+              ${acct !== 'grupo' && html`<input class="inp" placeholder="Como você gostaria de ser chamado(a)?" value=${f.apelido} onInput=${up('apelido')} />`}
               ${acct === 'grupo' && html`<div class="chips" style=${{flexWrap:'wrap'}}>${TIPOS.map(t => html`<button type="button" key=${t} class=${'chip ' + (gTipo===t?'on':'')} onClick=${() => setGTipo(t)}>${t}</button>`)}</div>`}
               <input class="inp" placeholder=${acct === 'grupo' ? 'WhatsApp do responsável (com DDD)' : 'WhatsApp (com DDD)'} inputmode="tel" value=${f.phone} onInput=${up('phone')} />
               <div class="lbl">Acesso</div>
@@ -998,7 +1001,7 @@ function AgendaBanner({ me, onPick, gid }) {
   const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && groups.includes(e.ownerId)) || (e.ownerType === 'solo' && e.ownerId === me)));
   const ym = today.slice(0, 7);
   const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && !isEnsaio(e) && e.date.startsWith(ym)).length;
-  const first = (cantorName(st, me) || '').split(' ')[0];
+  const first = gid ? (st.grupos[gid]?.name || callName(st, me)) : callName(st, me);
   const label = (e) => isEnsaio(e) ? evTitle(st, e) : e.ownerType === 'grupo' ? ownerName(st, e) : '🎙️ Solo';
   return html`<div class="card" style=${{borderRadius:'18px', padding:'16px', background:'linear-gradient(135deg, rgba(236,72,153,.28), rgba(139,92,246,.28) 55%, rgba(6,182,212,.2))', border:'1px solid rgba(255,255,255,.12)', display:'grid', gap:'10px'}}>
     <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
@@ -1011,7 +1014,7 @@ function AgendaBanner({ me, onPick, gid }) {
         <div class="dim" style=${{fontSize:'11px'}}>este mês</div>
       </div>
     </div>
-    <div style=${{display:'grid', gap:'6px'}}>${week.map((d, i) => { const evs = weekEvs.filter(e => e.date === d); const isT = d === today; const past = d < today; return html`<button key=${d} onClick=${() => onPick(d)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border: isT ? '1px solid #22d3ee' : '1px solid rgba(255,255,255,.06)', background: isT ? 'linear-gradient(135deg,rgba(34,211,238,.22),rgba(139,92,246,.22))' : evs.length ? 'rgba(2,6,23,.45)' : 'rgba(2,6,23,.22)', color:'var(--text-hi)', opacity: past ? .55 : 1}}>
+    <div style=${{display:'grid', gap:'6px'}}>${!weekEvs.length && html`<div class="okbox" style=${{padding:'8px 10px'}}>🎉 Semana livre — nenhum compromisso de domingo a sábado.</div>`}${week.map((d, i) => { const evs = weekEvs.filter(e => e.date === d); if (!evs.length) return null; const isT = d === today; const past = d < today; return html`<button key=${d} onClick=${() => onPick(d)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border: isT ? '1px solid #22d3ee' : '1px solid rgba(255,255,255,.06)', background: isT ? 'linear-gradient(135deg,rgba(34,211,238,.22),rgba(139,92,246,.22))' : evs.length ? 'rgba(2,6,23,.45)' : 'rgba(2,6,23,.22)', color:'var(--text-hi)', opacity: past ? .55 : 1}}>
       <div style=${{minWidth:'44px', textAlign:'center'}}><div style=${{fontSize:'11px', fontWeight:900, color: isT ? '#22d3ee' : (i === 0 || i === 6 ? '#f472b6' : '#a78bfa')}}>${isT ? 'HOJE' : DOW3[i].toUpperCase()}</div><div style=${{fontWeight:900, fontSize:'17px', lineHeight:1.1}}>${parseYmd(d).getDate()}</div></div>
       <div style=${{flex:1, minWidth:0, display:'grid', gap:'3px'}}>
         ${evs.length ? evs.map(e => html`<div key=${e.id} style=${{display:'flex', gap:'6px', alignItems:'center', minWidth:0}}>
@@ -1968,16 +1971,17 @@ function ProfileView({ me, onLogout, installPrompt }) {
   const [phone, setPhone] = useState(c.phone || '');
   const [np, setNp] = useState('');
   const [city, setCity] = useState(c.city || '');
+  const [apelido, setApelido] = useState(c.apelido || '');
   const [bio, setBio] = useState(c.bio || '');
   const [q, setQ] = useState(c.q || ''); const [a, setA] = useState('');
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   // Salva sozinho: 0,8s depois de parar de digitar.
   useEffect(() => {
-    if (name === (c.name||'') && phone === (c.phone||'') && city === (c.city||'') && bio === (c.bio||'')) return;
-    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim(), city: city.trim(), bio: bio.trim() }); toast('Salvo ✅'); } }, 800);
+    if (name === (c.name||'') && phone === (c.phone||'') && city === (c.city||'') && bio === (c.bio||'') && apelido === (c.apelido||'')) return;
+    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim(), city: city.trim(), bio: bio.trim(), apelido: apelido.trim() }); toast('Salvo ✅'); } }, 800);
     return () => clearTimeout(t);
-  }, [name, phone, city, bio]);
+  }, [name, phone, city, bio, apelido]);
   const vozes = c.vozes || [];
   const toggleVoz = (v) => { const n = vozes.includes(v) ? vozes.filter(x => x !== v) : [...vozes, v]; Store.update('cantores', me, { vozes: n }); };
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
@@ -1987,6 +1991,8 @@ function ProfileView({ me, onLogout, installPrompt }) {
       <${PhotoPicker} value=${c.photo || ''} onChange=${v => { Store.update('cantores', me, { photo: v }); toast(v ? 'Foto salva ✅' : 'Foto removida'); }} name=${name} />
       <div class="lbl">Nome</div>
       <input class="inp" value=${name} onInput=${e => setName(e.target.value)} />
+      <div class="lbl">Como você gostaria de ser chamado(a)?</div>
+      <input class="inp" placeholder=${'Ex: ' + ((name || '').split(' ')[0] || 'Paulinho')} value=${apelido} onInput=${e => setApelido(e.target.value)} />
       <div class="lbl">WhatsApp</div>
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
       <div class="lbl">Cidade</div>
@@ -2384,7 +2390,7 @@ function App() {
     : session.group
     ? [['agenda','📅','Agenda'], ['integrantes','👥','Integrantes'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','🎤','Grupo']]
     : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','👤','Perfil']];
-  const title = session.dev ? 'Desenvolvedor' : (cantorName(st, me) || '').split(' ')[0];
+  const title = session.dev ? 'Desenvolvedor' : callName(st, me);
 
   return html`
     <div class="app">
