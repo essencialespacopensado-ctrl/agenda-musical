@@ -76,23 +76,36 @@
   .nav-in button.on { background:linear-gradient(135deg,rgba(236,72,153,.25),rgba(139,92,246,.25)); color:#fff; }
   .badge { position:absolute; top:2px; right:calc(50% - 22px); background:var(--busy); color:#fff; border-radius:999px; font-size:10px; min-width:17px; height:17px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
 
-  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-  .cal-head button { width:40px; height:40px; border-radius:12px; border:1px solid var(--border-soft); background:rgba(148,163,184,.08); color:var(--text-hi); font-size:18px; }
-  .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
-  .dow { text-align:center; font-size:11px; font-weight:800; color:var(--text-dim); padding:2px 0 4px; }
-  .day { aspect-ratio:1/1.05; border-radius:11px; border:1px solid var(--border-soft); background:rgba(148,163,184,.05); color:var(--text-hi); font-size:14px; font-weight:700; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:5px 0 0; gap:3px; position:relative; }
-  .day.out { opacity:.28; }
-  .day.past { opacity:.55; }
-  .day.today { outline:2px solid var(--accent-1); outline-offset:-2px; }
-  .day.st-free { background:rgba(16,185,129,.10); border-color:rgba(16,185,129,.28); }
-  .day.st-mine { background:rgba(59,130,246,.28); border-color:rgba(59,130,246,.6); }
-  .day.st-maybe { background:rgba(245,158,11,.24); border-color:rgba(245,158,11,.6); }
-  .day.st-busy { background:rgba(239,68,68,.24); border-color:rgba(239,68,68,.6); }
-  .day.st-ens { background:rgba(16,185,129,.35); border-color:#10b981; color:#fff; }
-  .day.st-extra { background:rgba(245,158,11,.38); border-color:#f59e0b; color:#fff; }
+  /* ---- Calendário: visual neon/tecnológico ---- */
+  .calbox { position:relative; padding:12px; border-radius:20px; background:
+      radial-gradient(120% 80% at 0% 0%, rgba(236,72,153,.22), transparent 55%),
+      radial-gradient(120% 80% at 100% 0%, rgba(139,92,246,.24), transparent 55%),
+      radial-gradient(120% 90% at 50% 120%, rgba(6,182,212,.22), transparent 60%),
+      linear-gradient(160deg,#111a33,#0b1124);
+    border:1px solid rgba(139,92,246,.45); box-shadow:0 0 0 1px rgba(236,72,153,.12) inset, 0 18px 40px -18px rgba(139,92,246,.6); }
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .cal-head button { width:42px; height:42px; border-radius:14px; border:1px solid rgba(6,182,212,.5); background:linear-gradient(135deg,rgba(6,182,212,.25),rgba(139,92,246,.25)); color:#fff; font-size:20px; font-weight:900; box-shadow:0 0 14px -4px rgba(6,182,212,.8); }
+  .cal-head .mtitle { background:linear-gradient(90deg,#f472b6,#a78bfa,#22d3ee) !important; -webkit-background-clip:text !important; background-clip:text !important; color:transparent !important; letter-spacing:.5px; text-transform:uppercase; font-size:16px !important; box-shadow:none !important; border:none !important; }
+  .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
+  .dow { text-align:center; font-size:11px; font-weight:900; padding:2px 0 6px; letter-spacing:1px; color:#a78bfa; }
+  .dow:first-child, .dow:nth-child(7) { color:#f472b6; }
+  .day { aspect-ratio:1/1.05; border-radius:12px; border:1px solid rgba(148,163,184,.16); background:linear-gradient(160deg,rgba(30,41,59,.85),rgba(15,23,42,.85)); color:#e2e8f0; font-size:14px; font-weight:800; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:5px 0 0; gap:3px; position:relative; transition:transform .12s, box-shadow .2s; }
+  .day:hover { transform:translateY(-1px); box-shadow:0 0 12px -3px rgba(167,139,250,.8); }
+  .day.out { opacity:.22; }
+  .day.past { opacity:.5; filter:saturate(.6); }
+  @keyframes todayPulse { 0%,100%{ box-shadow:0 0 0 2px #22d3ee, 0 0 12px 0 rgba(34,211,238,.7);} 50%{ box-shadow:0 0 0 2px #f472b6, 0 0 18px 2px rgba(244,114,182,.7);} }
+  .day.today { animation:todayPulse 2.6s ease-in-out infinite; border-color:transparent; }
+  .day.st-free { background:linear-gradient(160deg,rgba(16,185,129,.28),rgba(6,95,70,.35)); border-color:rgba(52,211,153,.55); color:#d1fae5; }
+  .day.st-mine { background:linear-gradient(160deg,#3b82f6,#6366f1); border-color:#93c5fd; color:#fff; box-shadow:0 0 14px -2px rgba(99,102,241,.9); }
+  .day.st-maybe { background:linear-gradient(160deg,#f59e0b,#f97316); border-color:#fcd34d; color:#fff; box-shadow:0 0 14px -2px rgba(249,115,22,.9); }
+  .day.st-busy { background:linear-gradient(160deg,rgba(239,68,68,.55),rgba(190,18,60,.55)); border-color:#fca5a5; color:#fff; }
+  .day.st-has { background:linear-gradient(160deg,rgba(236,72,153,.45),rgba(139,92,246,.45)); border-color:#f0abfc; color:#fff; box-shadow:0 0 14px -3px rgba(236,72,153,.9); }
+  .day.st-open { background:linear-gradient(160deg,rgba(30,58,138,.35),rgba(15,23,42,.85)); }
+  .day.st-ens { background:linear-gradient(160deg,#10b981,#0891b2); border-color:#6ee7b7; color:#fff; box-shadow:0 0 14px -2px rgba(16,185,129,.95); }
+  .day.st-extra { background:linear-gradient(160deg,#f59e0b,#ec4899); border-color:#fde68a; color:#fff; box-shadow:0 0 16px -2px rgba(245,158,11,.95); }
   .day.st-off { opacity:.35; text-decoration:line-through; }
   .dots { display:flex; gap:3px; flex-wrap:wrap; justify-content:center; max-width:90%; }
-  .dot { width:7px; height:7px; border-radius:50%; }
+  .dot { width:7px; height:7px; border-radius:50%; box-shadow:0 0 6px rgba(255,255,255,.5), 0 0 0 1px rgba(255,255,255,.6); }
   .legend { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; font-size:12px; color:var(--text-mid); }
   .legend span { display:flex; align-items:center; gap:5px; }
   .sq { width:12px; height:12px; border-radius:4px; display:inline-block; }
@@ -152,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.11';
+const APP_VERSION = '2026-10-11.12';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -391,6 +404,19 @@ function participantsOf(st, ev) {
 }
 const isEnsaio = (ev) => ev && ev.kind === 'ensaio';
 // Datas de uma recorrência: semanal, quinzenal ou mensal (mesmo dia do mês).
+// Ensaios por semana: dias da semana escolhidos (0=Dom … 6=Sáb), por N semanas, toda semana ou a cada 2.
+function weekDates(start, dias, weeks, every) {
+  const out = []; const d0 = parseYmd(start);
+  const sun = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() - d0.getDay());
+  for (let w = 0; w < weeks; w++) {
+    for (const wd of [...dias].sort()) {
+      const d = new Date(sun.getFullYear(), sun.getMonth(), sun.getDate() + w * 7 * (every || 1) + wd);
+      if (d >= d0) out.push(ymd(d));
+    }
+  }
+  return out;
+}
+const DOW3 = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 function recurDates(start, freq, count) {
   const out = []; const d0 = parseYmd(start);
   for (let i = 0; i < count; i++) {
@@ -757,10 +783,10 @@ function Calendar({ month, setMonth, renderDay, onPick }) {
   const shown = lastRowUsed ? days : days.slice(0, 35);
   const shift = (n) => setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1));
   return html`
-    <div>
+    <div class="calbox">
       <div class="cal-head">
         <button onClick=${() => shift(-1)}>‹</button>
-        <button onClick=${() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} style=${{width:'auto', border:'none', background:'none', fontWeight:800, fontSize:'17px', padding:'0 6px'}}>${MESES[month.getMonth()]} ${month.getFullYear()}</button>
+        <button class="mtitle" onClick=${() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} style=${{width:'auto', border:'none', background:'none', fontWeight:900, fontSize:'17px', padding:'0 6px'}}>${MESES[month.getMonth()]} ${month.getFullYear()}</button>
         <button onClick=${() => shift(1)}>›</button>
       </div>
       <div class="cal">
@@ -801,7 +827,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
   const renderDay = (s) => {
     if (ctx.type === 'pessoa') {
       const evs = byDate[s] || [];
-      return { dots: evs.map(e => ownerColor(st, e)), cls: evs.length ? '' : '' };
+      return { dots: evs.map(e => ownerColor(st, e)), cls: evs.length ? 'st-has' : (s >= today ? 'st-open' : '') };
     }
     if (!g) return {};
     const { own, busy } = groupDay(st, g, s);
@@ -1333,14 +1359,15 @@ function EventForm({ me, init, onClose }) {
   const [repert, setRepert] = useState(pickD('repert', normRep(editing?.repertoire)));
   const [freq, setFreq] = useState(pickD('freq', 'nao'));
   const [count, setCount] = useState(pickD('count', 8));
+  const [dias, setDias] = useState(pickD('dias', [parseYmd(editing?.date || init.date || todayStr()).getDay()]));
   const [manual, setManual] = useState(pickD('manual', []));   // dias extras marcados no calendário
   const [removed, setRemoved] = useState(pickD('removed', [])); // dias da recorrência tirados no calendário
   const [extra, setExtra] = useState(pickD('extra', editing?.extra || false));
   const [calM, setCalM] = useState(() => { const d = parseYmd(editing?.date || init.date || todayStr()); return new Date(d.getFullYear(), d.getMonth(), 1); });
   useEffect(() => { if (dr) toast('📝 Rascunho recuperado — continue de onde parou'); }, []);
   useEffect(() => {
-    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, manual, removed, extra });
-  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, manual, removed, extra]);
+    writeDraft({ me, editId: editing?.id || null, bloqueio: isBlock, owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, manual, removed, extra });
+  }, [owner, date, period, time, place, notes, status, tipo, focus, repert, freq, count, dias, manual, removed, extra]);
   const closeForm = () => { clearDraft(); onClose(); };
   const [applyNext, setApplyNext] = useState(false);
   const [ask, setAsk] = useState(null);
@@ -1350,7 +1377,7 @@ function EventForm({ me, init, onClose }) {
   const who = isBlock || !g ? [me] : (g.members||[]);
   const conflicts = conflictsFor(st, who, date, period, editing?.id);
   // Datas do ensaio: recorrência (menos os dias tirados) + dias extras marcados no calendário.
-  const baseDates = ens && !editing && date ? (freq !== 'nao' ? recurDates(date, freq, Math.max(2, Math.min(52, Number(count) || 2))) : [date]) : [];
+  const baseDates = ens && !editing && date ? (freq !== 'nao' && dias.length ? weekDates(date, dias, Math.max(1, Math.min(52, Number(count) || 1)), freq === 'quinzenal' ? 2 : 1) : [date]) : [];
   const selDates = [...new Set([...baseDates.filter(d => !removed.includes(d)), ...manual])].sort();
   const busyOn = (d) => conflictsFor(st, who, d, period).length > 0;
   const tapCal = (d) => {
@@ -1405,7 +1432,7 @@ function EventForm({ me, init, onClose }) {
       const seriesId = uid('ser'); const skipped = []; let made = 0;
       for (const d of selDates) {
         if (conflictsFor(st, who, d, period).length) { skipped.push(fmtDate(d)); continue; }
-        const one = { ...ev, id: made === 0 ? ev.id : uid('ev'), date: d, seriesId, seriesFirst: made === 0, seriesFreq: freq, extra: manual.includes(d) || (!!extra && selDates.length === 1) };
+        const one = { ...ev, id: made === 0 ? ev.id : uid('ev'), date: d, seriesId, seriesFirst: made === 0, seriesFreq: freq, seriesDias: dias, extra: manual.includes(d) || (!!extra && selDates.length === 1) };
         await Store.set('eventos', one.id, one); made++;
       }
       Store.log('agendamento', cantorName(st, me), 'Ensaios ' + (g ? g.name : 'Solo') + ' (' + made + 'x a partir de ' + fmtDate(date) + ')');
@@ -1444,12 +1471,20 @@ function EventForm({ me, init, onClose }) {
       <div class="seg">${PERIODOS.map(p => html`<button key=${p.id} class=${period===p.id?'on':''} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}</button>`)}</div>
       ${!isBlock && html`<input class="inp" type="time" value=${time} onInput=${e => setTime(e.target.value)} />`}
       ${ens && !editing && html`<div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', border:'1px solid rgba(16,185,129,.35)', background:'rgba(16,185,129,.08)'}}>
-        <div class="lbl">🔁 Recorrência</div>
-        <div class="chips" style=${{flexWrap:'wrap'}}>${REPS.map(([id, lb]) => html`<button key=${id} class=${'chip ' + (freq===id?'on':'')} onClick=${() => setFreq(id)}>${lb}</button>`)}</div>
-        ${freq !== 'nao' && html`<div class="row" style=${{gap:'8px', alignItems:'center'}}>
-          <span class="muted">Quantas vezes?</span>
-          <input class="inp" type="number" min="2" max="52" style=${{width:'90px'}} value=${count} onInput=${e => setCount(e.target.value)} />
+        <div class="lbl">🔁 Ensaios toda semana</div>
+        <div class="seg">
+          <button class=${freq==='nao'?'on':''} onClick=${() => setFreq('nao')}>Só este dia</button>
+          <button class=${freq==='semanal'?'on':''} onClick=${() => setFreq('semanal')}>Toda semana</button>
+          <button class=${freq==='quinzenal'?'on':''} onClick=${() => setFreq('quinzenal')}>A cada 2 sem.</button>
         </div>
+        ${freq !== 'nao' && html`
+          <div class="muted">Em quais dias da semana? <b>${dias.length} ensaio${dias.length === 1 ? '' : 's'} por semana</b></div>
+          <div class="chips" style=${{flexWrap:'wrap'}}>${DOW3.map((lb, i) => html`<button key=${i} class=${'chip ' + (dias.includes(i) ? 'on' : '')} style=${dias.includes(i) ? {background:'#10b981'} : null} onClick=${() => setDias(dias.includes(i) ? dias.filter(x => x !== i) : [...dias, i])}>${lb}</button>`)}</div>
+          <div class="row" style=${{gap:'8px', alignItems:'center'}}>
+            <span class="muted">Por quantas semanas?</span>
+            <input class="inp" type="number" min="1" max="52" style=${{width:'90px'}} value=${count} onInput=${e => setCount(e.target.value)} />
+          </div>
+          ${!dias.length && html`<div class="err">Escolha pelo menos um dia da semana.</div>`}
         `}
         <div class="lbl" style=${{marginTop:'4px'}}>📅 Calendário dos ensaios</div>
         <div class="dim">Toque num dia pra marcar um <b style=${{color:'#fbbf24'}}>⭐ ensaio extra</b>. Toque num 🎼 pra tirar aquele dia.</div>
