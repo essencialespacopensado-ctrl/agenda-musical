@@ -149,7 +149,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.08';
+const APP_VERSION = '2026-10-11.10';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -383,6 +383,24 @@ function participantsOf(st, ev) {
   }
   return [ev.ownerId];
 }
+const isEnsaio = (ev) => ev && ev.kind === 'ensaio';
+// Datas de uma recorrência: semanal, quinzenal ou mensal (mesmo dia do mês).
+function recurDates(start, freq, count) {
+  const out = []; const d0 = parseYmd(start);
+  for (let i = 0; i < count; i++) {
+    let d;
+    if (freq === 'mensal') { d = new Date(d0.getFullYear(), d0.getMonth() + i, d0.getDate()); if (d.getDate() !== d0.getDate()) continue; }
+    else d = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + i * (freq === 'quinzenal' ? 14 : 7));
+    out.push(ymd(d));
+  }
+  return out;
+}
+const REPS = [['nao','Não repete'],['semanal','Toda semana'],['quinzenal','A cada 2 semanas'],['mensal','Todo mês']];
+function evTitle(st, ev) {
+  if (ev.kind === 'bloqueio') return '🚫 ' + (ev.place || 'Compromisso pessoal');
+  if (isEnsaio(ev)) return '🎼 Ensaio · ' + (ev.ownerType === 'grupo' ? ownerName(st, ev) : 'Solo');
+  return ownerName(st, ev);
+}
 function ownerName(st, ev) {
   if (ev.ownerType === 'grupo') return st.grupos[ev.ownerId]?.name || 'Grupo removido';
   if (ev.kind === 'bloqueio') return 'Compromisso pessoal';
@@ -438,7 +456,7 @@ function publicDay(st, g, date, period) {
 }
 function describeEv(st, ev) {
   const p = PER[ev.period] || PER.dia;
-  return `${ownerName(st, ev)} · ${p.label}${ev.time ? ' ' + ev.time : ''}${ev.place ? ' · ' + ev.place : ''}`;
+  return `${isEnsaio(ev) ? 'Ensaio · ' : ''}${ownerName(st, ev)} · ${p.label}${ev.time ? ' ' + ev.time : ''}${ev.place ? ' · ' + ev.place : ''}`;
 }
 
 // Avisos: quando alguém de um grupo meu marca outra coisa (solo, outro grupo ou bloqueio),
@@ -464,13 +482,17 @@ function buildAvisos(st, login) {
     groups.forEach(g => {
       if (e.ownerType === 'grupo' && e.ownerId === g.id) {
         if (e.source === 'igreja') out.push({ id:e.id+'|'+g.id, kind:'pedido', g, ev:e, at:e.createdAt||0 });
-        else if (e.createdBy && e.createdBy !== login) out.push({ id:e.id+'|'+g.id, kind:'novo', g, ev:e, at:e.createdAt||0 });
+        else if (e.createdBy && e.createdBy !== login && !(e.seriesId && !e.seriesFirst)) out.push({ id:e.id+'|'+g.id, kind:'novo', g, ev:e, at:e.createdAt||0 });
         return;
       }
       if (isChurchPending(e)) return;
       const who = (g.members||[]).filter(m => m !== login && parts.includes(m));
       if (who.length) out.push({ id:e.id+'|'+g.id, kind:'bloqueio', g, ev:e, who, at:e.createdAt||0 });
     });
+  });
+  // Resposta do desenvolvedor às minhas sugestões.
+  Object.values(st.log || {}).forEach(l => {
+    if (l.type === 'sugestao' && l.login === login && l.reply) out.push({ id: 'sug|' + l.id + '|' + (l.replyAt || 0), kind:'resp', sug:l, g:{ color:'#10b981' }, at: l.replyAt || l.at || 0 });
   });
   return out.sort((a,b) => b.at - a.at);
 }
@@ -819,6 +841,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
 
       ${canEditCtx && html`<div class="row">
         <button class="btn" onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx })}>➕ Agendar apresentação</button>
+        <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx, ensaio:true })}>🎼 Ensaio</button>
         ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setForm({ date: today, ctx, bloqueio:true })}>🚫 Bloquear dia</button>`}
       </div>`}
       ${me && html`<button class="btn2" style=${{background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareAgenda(st, ctx, me)}>📤 Compartilhar agenda (imagem)</button>`}
@@ -856,11 +879,11 @@ async function shareAgenda(st, ctx, me) {
     const g = st.grupos[ctx.id]; if (!g) return;
     title = g.name; sub = (g.tipo || 'Grupo') + ' · Agenda de apresentações';
     color = g.color || '#8b5cf6'; logo = g.logo;
-    list = allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today && e.status !== 'pendente');
+    list = allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today && e.status !== 'pendente' && !isEnsaio(e));
   } else {
     const c = st.cantores[me] || {};
     title = c.name || 'Minha agenda'; sub = 'Agenda de apresentações'; color = SOLO_COLOR; logo = c.photo;
-    list = eventsOfPerson(st, me).filter(e => e.date >= today && e.kind !== 'bloqueio' && e.status !== 'pendente');
+    list = eventsOfPerson(st, me).filter(e => e.date >= today && e.kind !== 'bloqueio' && !isEnsaio(e) && e.status !== 'pendente');
   }
   list.sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
   list = list.slice(0, 10);
@@ -921,9 +944,9 @@ function AgendaBanner({ me, onPick }) {
   const groups = myGroups(st, me).map(g => g.id);
   const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && groups.includes(e.ownerId)) || (e.ownerType === 'solo' && e.ownerId === me)));
   const ym = today.slice(0, 7);
-  const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && e.date.startsWith(ym)).length;
+  const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && !isEnsaio(e) && e.date.startsWith(ym)).length;
   const first = (cantorName(st, me) || '').split(' ')[0];
-  const label = (e) => e.ownerType === 'grupo' ? ownerName(st, e) : '🎙️ Solo';
+  const label = (e) => isEnsaio(e) ? evTitle(st, e) : e.ownerType === 'grupo' ? ownerName(st, e) : '🎙️ Solo';
   return html`<div class="card" style=${{borderRadius:'18px', padding:'16px', background:'linear-gradient(135deg, rgba(236,72,153,.28), rgba(139,92,246,.28) 55%, rgba(6,182,212,.2))', border:'1px solid rgba(255,255,255,.12)', display:'grid', gap:'10px'}}>
     <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
       <div>
@@ -939,7 +962,7 @@ function AgendaBanner({ me, onPick }) {
       <div style=${{minWidth:'42px', textAlign:'center'}}><div style=${{fontWeight:900, fontSize:'18px', lineHeight:1}}>${d.getDate()}</div><div class="dim" style=${{fontSize:'11px'}}>${DOW_LONG[d.getDay()].slice(0,3)}</div></div>
       <div style=${{flex:1, minWidth:0}}>
         <div style=${{fontWeight:800}}>${label(e)}${e.status === 'pendente' ? html` <span style=${{color:'var(--maybe)', fontSize:'12px'}}>· a confirmar</span>` : ''}</div>
-        <div class="dim" style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).ic} ${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${e.place ? ' · ' + e.place : ''}</div>
+        <div class="dim" style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).ic} ${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${e.place ? ' · ' + e.place : ''}${isEnsaio(e) && e.focus ? ' · 🎯 ' + e.focus : ''}</div>
       </div>
     </button>`; })}
     ${pend.length > 0 && html`<div class="warnbox" style=${{padding:'8px 10px'}}>⛪ ${pend.length} pedido${pend.length > 1 ? 's' : ''} de igreja esperando confirmação — veja em 🔔 Avisos.</div>`}
@@ -971,7 +994,7 @@ function UpdateBanner() {
     try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch(e) {}
     location.reload();
   };
-  return html`<div style=${{position:'fixed', top:'calc(env(safe-area-inset-top) + 8px)', left:'12px', right:'12px', margin:'0 auto', maxWidth:'520px', zIndex:70, padding:'10px 12px', borderRadius:'14px', background:'linear-gradient(135deg,#ec4899,#8b5cf6)', color:'#fff', boxShadow:'0 12px 30px -10px #000', display:'flex', alignItems:'center', gap:'10px'}}>
+  return html`<div style=${{position:'relative', margin:'10px auto', maxWidth:'520px', zIndex:5, padding:'10px 12px', borderRadius:'14px', background:'linear-gradient(135deg,#ec4899,#8b5cf6)', color:'#fff', boxShadow:'0 12px 30px -10px #000', display:'flex', alignItems:'center', gap:'10px'}}>
     <div style=${{flex:1, fontWeight:800, fontSize:'14px'}}>🆕 Nova versão do app disponível</div>
     <button onClick=${go} style=${{border:'none', borderRadius:'10px', padding:'8px 12px', fontWeight:800, background:'#fff', color:'#7c3aed'}}>Atualizar</button>
   </div>`;
@@ -987,7 +1010,7 @@ function EventRow({ ev, onClick }) {
       <div class="dim" style=${{fontSize:'11px'}}>${MESES[d.getMonth()].slice(0,3)}</div>
     </div>
     <div style=${{flex:1, minWidth:0}}>
-      <div style=${{fontWeight:800}}>${ev.kind === 'bloqueio' ? '🚫 ' + (ev.place || 'Compromisso pessoal') : ownerName(st, ev)}${ev.status === 'pendente' ? html` <span style=${{color:'var(--maybe)', fontSize:'12px'}}>· a confirmar</span>` : ''}</div>
+      <div style=${{fontWeight:800}}>${evTitle(st, ev)}${ev.status === 'pendente' ? html` <span style=${{color:'var(--maybe)', fontSize:'12px'}}>· a confirmar</span>` : ''}</div>
       <div class="dim" style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${p.ic} ${p.label}${ev.time ? ' ' + ev.time : ''}${ev.kind !== 'bloqueio' && ev.place ? ' · ' + ev.place : ''}</div>
     </div>
   </button>`;
@@ -1047,6 +1070,12 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
   const canTouch = (ev) => !readOnly && me && (ev.ownerType === 'grupo' ? (st.grupos[ev.ownerId]?.members||[]).includes(me) : ev.ownerId === me);
   const del = async (ev) => {
     if (!confirm('Excluir esse compromisso? A data volta a ficar livre pros grupos.')) return;
+    if (ev.seriesId) {
+      const next = Object.values(st.eventos).filter(e => e.seriesId === ev.seriesId && e.id !== ev.id && e.date > ev.date);
+      if (next.length && confirm('Excluir também os próximos ' + next.length + ' ensaio(s) desta série?\n\nOK = excluir todos os próximos · Cancelar = só este')) {
+        for (const e of next) await Store.remove('eventos', e.id);
+      }
+    }
     await Store.remove('eventos', ev.id);
     Store.log('exclusao', cantorName(st, me), ownerName(st, ev) + ' ' + fmtDate(ev.date));
     toast('Compromisso excluído');
@@ -1075,14 +1104,17 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
         const p = PER[ev.period] || PER.dia;
         const parts = participantsOf(st, ev);
         return html`<div key=${ev.id} class="ev" style=${{borderLeftColor: ownerColor(st, ev)}}>
-          <div style=${{fontWeight:800, fontSize:'15.5px'}}>${ev.kind === 'bloqueio' ? '🚫 ' + (ev.place || 'Compromisso pessoal') : ownerName(st, ev)}</div>
+          <div style=${{fontWeight:800, fontSize:'15.5px'}}>${evTitle(st, ev)}</div>
           <div class="muted" style=${{marginTop:'3px'}}>${p.ic} ${p.label}${ev.time ? ' · ' + ev.time : ''}</div>
           ${ev.kind !== 'bloqueio' && ev.place && html`<div class="muted">📍 ${ev.place}</div>`}
+          ${isEnsaio(ev) && ev.focus && html`<div class="muted">🎯 <b>Foco:</b> ${ev.focus}</div>`}
+          ${isEnsaio(ev) && html`<${RepertoireView} rep=${ev.repertoire} me=${me} />`}
+          ${isEnsaio(ev) && ev.seriesId && html`<div class="dim">🔁 Ensaio recorrente</div>`}
           ${ev.notes && html`<div class="muted">📝 ${ev.notes}</div>`}
           ${ev.source === 'igreja' && ev.church && html`<${ChurchInfo} ev=${ev} />`}
           ${ev.ownerType === 'grupo' && html`<div class="dim" style=${{marginTop:'4px'}}>👥 ${parts.map(l => cantorName(st, l)).join(', ')}${(ev.excluded||[]).length ? ' · substituído(s): ' + ev.excluded.map(l => cantorName(st, l)).join(', ') : ''}</div>`}
           <div class="row" style=${{marginTop:'6px', flexWrap:'wrap', gap:'6px'}}>
-            ${ev.status === 'pendente' ? html`<span class="sync" style=${{background:'rgba(245,158,11,.15)', color:'#fcd34d'}}>🟡 A confirmar</span>` : ev.kind !== 'bloqueio' ? html`<span class="sync" style=${{background:'rgba(59,130,246,.18)', color:'#93c5fd'}}>🔵 Confirmado</span>` : null}
+            ${ev.status === 'pendente' ? html`<span class="sync" style=${{background:'rgba(245,158,11,.15)', color:'#fcd34d'}}>🟡 A confirmar</span>` : isEnsaio(ev) ? html`<span class="sync" style=${{background:'rgba(16,185,129,.15)', color:'#6ee7b7'}}>🎼 Ensaio</span>` : ev.kind !== 'bloqueio' ? html`<span class="sync" style=${{background:'rgba(59,130,246,.18)', color:'#93c5fd'}}>🔵 Confirmado</span>` : null}
             <span class="dim">${ev.source === 'igreja' ? '⛪ pedido feito pela igreja' : 'marcado por ' + cantorName(st, ev.createdBy)}</span>
           </div>
           ${canTouch(ev) && html`<div class="row" style=${{marginTop:'10px', gap:'6px'}}>
@@ -1100,10 +1132,153 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
       </div>`}
       ${!readOnly && html`<div class="row" style=${{marginTop:'4px'}}>
         <button class="btn" onClick=${() => onNew({})}>➕ Agendar neste dia</button>
+        <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => onNew({ ensaio:true })}>🎼 Ensaio</button>
         ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => onNew({ bloqueio:true })}>🚫 Bloquear</button>`}
       </div>`}
     </div>
   </${Sheet}>`;
+}
+
+// ---------- CONVITE COM MENSAGEM PERSONALIZADA ----------
+// Quem convida escreve a mensagem que a pessoa vai ler; o link do app vai junto no final.
+function InviteSheet({ me, group, onClose }) {
+  const st = useStore();
+  const myName = (cantorName(st, me) || '').split(' ')[0];
+  const def = group
+    ? 'Olá! Aqui é ' + myName + '. Quero te convidar pra fazer parte do ' + group.name + ' na Agenda Musical. Baixe o app, crie sua conta e me avise o seu usuário que eu te adiciono no grupo. 🎶'
+    : 'Olá! Aqui é ' + myName + '. Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos. 🎶';
+  const [txt, setTxt] = useState(def);
+  const send = () => { const t = txt.trim() || def; shareLink(group ? 'Convite — ' + group.name : 'Agenda Musical', t, appLink()); onClose(); };
+  return html`<${Sheet} title=${group ? '📤 Convidar para ' + group.name : '📤 Convidar cantores'} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      <div class="lbl">Mensagem que a pessoa vai ler</div>
+      <textarea class="inp" rows="6" value=${txt} onInput=${e => setTxt(e.target.value)}></textarea>
+      <div class="dim">O link pra baixar o app vai junto, no final da mensagem.</div>
+      <div class="row" style=${{gap:'6px'}}>
+        <button class="btn2" onClick=${() => setTxt(def)}>↺ Mensagem padrão</button>
+        <button class="btn" style=${{flex:1}} onClick=${send}>📤 Enviar convite</button>
+      </div>
+    </div>
+  </${Sheet}>`;
+}
+
+// ---------- REPERTÓRIO E KITS (YouTube) ----------
+// Mesmo jeito do Momento de Louvor do Gerenciador de Culto (hospedagem só estática):
+// sugestões de busca em tempo real do próprio YouTube (JSONP) + 1 clique abre a busca de verdade
+// no youtube.com + cola o link do vídeo escolhido.
+const KIT_VOZES = ['Soprano','Contralto','Tenor','Baixo','Playback','Completa'];
+const ytSearchUrl = (q) => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
+function ytId(url) {
+  const u = (url || '').trim();
+  if (/^[\w-]{11}$/.test(u)) return u;
+  const m = u.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/|\/live\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+function ytSuggest(query, cb) {
+  try {
+    const name = '__ytS_' + Math.random().toString(36).slice(2);
+    let done = false; const sc = document.createElement('script');
+    const fin = (l) => { if (done) return; done = true; cb(l); try { delete window[name]; } catch(e) {} sc.remove(); };
+    window[name] = (d) => { let l = []; try { l = (d && d[1] ? d[1] : []).map(x => Array.isArray(x) ? x[0] : x).filter(Boolean); } catch(e) {} fin(l); };
+    sc.src = 'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=' + encodeURIComponent(query) + '&callback=' + name;
+    sc.onerror = () => fin([]); document.body.appendChild(sc); setTimeout(() => fin([]), 4000);
+  } catch(e) { cb([]); }
+}
+// Aceita o formato antigo (lista de textos) e o novo ({ title, focus, kits:[{voz, videoId}] }).
+const normRep = (r) => (r || []).map(x => typeof x === 'string' ? { title:x, focus:false, kits:[] } : { title: x.title || '', focus: !!x.focus, kits: x.kits || [] }).filter(x => x.title);
+
+function SongSearch({ onAdd }) {
+  const [q, setQ] = useState(''); const [sug, setSug] = useState([]); const t = useRef(null);
+  const change = (v) => { setQ(v); clearTimeout(t.current); if (v.trim().length < 2) { setSug([]); return; } t.current = setTimeout(() => ytSuggest(v.trim(), setSug), 350); };
+  const add = (v) => { const x = (v || q).trim(); if (!x) return; onAdd(x); setQ(''); setSug([]); };
+  return html`<div style=${{position:'relative'}}>
+    <div class="row" style=${{gap:'6px'}}>
+      <input class="inp" placeholder="🔎 Nome da música (busca no YouTube)" value=${q} onInput=${e => change(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
+      <button class="btn2 btn-green" style=${{whiteSpace:'nowrap'}} onClick=${() => add()}>➕</button>
+    </div>
+    ${sug.length > 0 && html`<div style=${{position:'absolute', left:0, right:0, top:'100%', zIndex:20, marginTop:'4px', borderRadius:'12px', background:'#0f172a', border:'1px solid rgba(255,255,255,.12)', boxShadow:'0 12px 30px -10px #000', overflow:'hidden'}}>
+      ${sug.slice(0, 7).map(x => html`<button key=${x} onClick=${() => add(x)} style=${{display:'block', width:'100%', textAlign:'left', padding:'9px 12px', border:'none', borderBottom:'1px solid rgba(255,255,255,.06)', background:'transparent', color:'var(--text-hi)'}}>🎵 ${x}</button>`)}
+    </div>`}
+  </div>`;
+}
+
+// Escolher o kit de UMA voz de uma música: sugestões, abrir busca no YouTube e colar o link.
+function KitPicker({ song, voz, kit, onSave, onClose }) {
+  const base = song + ' kit ' + voz.toLowerCase();
+  const [sug, setSug] = useState([]); const [link, setLink] = useState(kit?.videoId ? 'https://youtu.be/' + kit.videoId : ''); const [err, setErr] = useState('');
+  useEffect(() => { ytSuggest(base, setSug); }, [base]);
+  const id = ytId(link);
+  const save = () => { if (!id) { setErr('Não reconheci esse link. Abra o vídeo no YouTube, toque em Compartilhar → Copiar link e cole aqui.'); return; } onSave({ voz, videoId:id }); };
+  return html`<${Sheet} title=${'🎧 Kit ' + voz + ' — ' + song} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      <a class="btn" style=${{textAlign:'center', textDecoration:'none', background:'#dc2626'}} href=${ytSearchUrl(base)} target="_blank" rel="noopener">▶️ Buscar “${base}” no YouTube</a>
+      ${sug.length > 0 && html`<div><div class="dim" style=${{marginBottom:'4px'}}>Outras buscas sugeridas:</div>
+        <div class="chips" style=${{flexWrap:'wrap'}}>${sug.slice(0, 6).map(x => html`<a key=${x} class="chip" style=${{textDecoration:'none'}} href=${ytSearchUrl(x)} target="_blank" rel="noopener">🔎 ${x}</a>`)}</div></div>`}
+      <div class="lbl">Cole o link do vídeo escolhido</div>
+      <input class="inp" placeholder="https://youtu.be/..." value=${link} onInput=${e => { setLink(e.target.value); setErr(''); }} />
+      ${err && html`<div class="err">${err}</div>`}
+      ${id && html`<img src=${'https://img.youtube.com/vi/' + id + '/mqdefault.jpg'} style=${{width:'100%', borderRadius:'12px'}} />`}
+      <div class="row" style=${{gap:'6px'}}>
+        <button class="btn" style=${{flex:1}} onClick=${save}>✅ Usar esse vídeo</button>
+        ${kit && html`<button class="btn2 btn-red" onClick=${() => onSave(null)}>Remover</button>`}
+      </div>
+    </div>
+  </${Sheet}>`;
+}
+
+function RepertoireEditor({ value, onChange }) {
+  const [pick, setPick] = useState(null); // { i, voz }
+  const list = value;
+  const upd = (i, patch) => onChange(list.map((x, k) => k === i ? { ...x, ...patch } : x));
+  const move = (i, d) => { const j = i + d; if (j < 0 || j >= list.length) return; const n = list.slice(); [n[i], n[j]] = [n[j], n[i]]; onChange(n); };
+  const toggleVoz = (i, voz) => {
+    const s = list[i]; const has = s.kits.find(k => k.voz === voz);
+    if (has && has.videoId) { setPick({ i, voz }); return; }
+    if (has) upd(i, { kits: s.kits.filter(k => k.voz !== voz) });
+    else { upd(i, { kits: [...s.kits, { voz, videoId:null }] }); setPick({ i, voz }); }
+  };
+  return html`<div style=${{display:'grid', gap:'8px'}}>
+    <${SongSearch} onAdd=${(t) => onChange([...list, { title:t, focus:false, kits:[] }])} />
+    ${list.map((s, i) => html`<div key=${i} style=${{padding:'10px', borderRadius:'12px', background:'rgba(2,6,23,.35)', border: s.focus ? '1px solid #f59e0b' : '1px solid rgba(255,255,255,.08)', display:'grid', gap:'6px'}}>
+      <div class="row" style=${{gap:'6px', alignItems:'center'}}>
+        <b style=${{flex:1, minWidth:0}}>${i + 1}. ${s.title}</b>
+        <button class="chip" title="Música em foco" style=${s.focus ? {background:'#f59e0b', color:'#111'} : null} onClick=${() => upd(i, { focus: !s.focus })}>🎯</button>
+        <button class="chip" onClick=${() => move(i, -1)}>↑</button>
+        <button class="chip" onClick=${() => onChange(list.filter((_, k) => k !== i))}>✕</button>
+      </div>
+      <div class="dim">Kits:</div>
+      <div class="chips" style=${{flexWrap:'wrap'}}>${KIT_VOZES.map(v => { const k = s.kits.find(x => x.voz === v); return html`<button key=${v} class=${'chip ' + (k ? 'on' : '')} style=${k && k.videoId ? {background:'#16a34a'} : k ? {background:'#b45309'} : null} onClick=${() => toggleVoz(i, v)}>${k && k.videoId ? '✅' : k ? '🔎' : '＋'} ${v}</button>`; })}</div>
+    </div>`)}
+    ${pick && list[pick.i] && html`<${KitPicker} song=${list[pick.i].title} voz=${pick.voz} kit=${list[pick.i].kits.find(k => k.voz === pick.voz)}
+      onClose=${() => setPick(null)}
+      onSave=${(k) => { const s = list[pick.i]; const rest = s.kits.filter(x => x.voz !== pick.voz); upd(pick.i, { kits: k ? [...rest, k].sort((a,b) => KIT_VOZES.indexOf(a.voz) - KIT_VOZES.indexOf(b.voz)) : rest }); setPick(null); }} />`}
+  </div>`;
+}
+
+// Mostra o repertório no dia do ensaio, com os kits tocando dentro do app.
+function RepertoireView({ rep, me }) {
+  const st = useStore();
+  const [play, setPlay] = useState(null);
+  const minhas = (st.cantores[me]?.vozes) || [];
+  const list = normRep(rep).map(s => ({ ...s, kits: s.kits.slice().sort((a,b) => (minhas.includes(b.voz) ? 1 : 0) - (minhas.includes(a.voz) ? 1 : 0)) }));
+  if (!list.length) return null;
+  return html`<div style=${{marginTop:'4px', padding:'8px 10px', borderRadius:'10px', background:'rgba(2,6,23,.35)', display:'grid', gap:'6px'}}>
+    <div class="dim" style=${{fontWeight:800}}>🎵 Repertório</div>
+    ${list.map((s, i) => html`<div key=${i}>
+      <div class="muted" style=${s.focus ? {color:'#fcd34d', fontWeight:800} : null}>${i + 1}. ${s.title}${s.focus ? ' 🎯' : ''}</div>
+      ${s.kits.length > 0 && html`<div class="chips" style=${{flexWrap:'wrap', marginTop:'4px'}}>${s.kits.map(k => k.videoId
+        ? html`<button key=${k.voz} class="chip" style=${{background: minhas.includes(k.voz) ? '#dc2626' : 'rgba(220,38,38,.25)'}} onClick=${() => setPlay({ title: s.title + ' · ' + k.voz, id: k.videoId })}>▶️ ${k.voz}</button>`
+        : html`<a key=${k.voz} class="chip" style=${{textDecoration:'none'}} href=${ytSearchUrl(s.title + ' kit ' + k.voz.toLowerCase())} target="_blank" rel="noopener">🔎 ${k.voz}</a>`)}</div>`}
+    </div>`)}
+    ${play && html`<${Sheet} title=${'🎧 ' + play.title} onClose=${() => setPlay(null)}>
+      <div style=${{display:'grid', gap:'10px'}}>
+        <div style=${{position:'relative', paddingTop:'56.25%', borderRadius:'12px', overflow:'hidden', background:'#000'}}>
+          <iframe src=${'https://www.youtube-nocookie.com/embed/' + play.id + '?autoplay=1&rel=0&playsinline=1'} style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+        </div>
+        <a class="btn2" style=${{textAlign:'center', textDecoration:'none'}} href=${'https://www.youtube.com/watch?v=' + play.id} target="_blank" rel="noopener">Abrir no YouTube</a>
+      </div>
+    </${Sheet}>`}
+  </div>`;
 }
 
 // ---------- FORMULÁRIO DE AGENDAMENTO ----------
@@ -1120,6 +1295,13 @@ function EventForm({ me, init, onClose }) {
   const [place, setPlace] = useState(editing?.place || '');
   const [notes, setNotes] = useState(editing?.notes || '');
   const [status, setStatus] = useState(editing?.status || 'confirmado');
+  const [tipo, setTipo] = useState(editing ? (editing.kind === 'ensaio' ? 'ensaio' : 'apresentacao') : (init.ensaio ? 'ensaio' : 'apresentacao'));
+  const ens = !isBlock && tipo === 'ensaio';
+  const [focus, setFocus] = useState(editing?.focus || '');
+  const [repert, setRepert] = useState(normRep(editing?.repertoire));
+  const [freq, setFreq] = useState('nao');
+  const [count, setCount] = useState(8);
+  const [applyNext, setApplyNext] = useState(false);
   const [ask, setAsk] = useState(null);
   const [err, setErr] = useState('');
 
@@ -1154,8 +1336,30 @@ function EventForm({ me, init, onClose }) {
       status: isBlock ? 'confirmado' : status,
       excluded: excluded || (editing && g ? (editing.excluded||[]) : []),
     };
+    if (ens) {
+      ev.kind = 'ensaio'; ev.status = 'confirmado';
+      ev.focus = focus.trim();
+      ev.repertoire = repert;
+    }
+    // Ensaio recorrente: cria um compromisso por data, pulando as que já estão ocupadas.
+    if (ens && !editing && freq !== 'nao') {
+      const dates = recurDates(date, freq, Math.max(2, Math.min(52, Number(count) || 2)));
+      const seriesId = uid('ser'); const skipped = []; let made = 0;
+      for (const d of dates) {
+        if (conflictsFor(st, who, d, period).length) { skipped.push(fmtDate(d)); continue; }
+        const one = { ...ev, id: made === 0 ? ev.id : uid('ev'), date: d, seriesId, seriesFirst: made === 0, seriesFreq: freq };
+        await Store.set('eventos', one.id, one); made++;
+      }
+      Store.log('agendamento', cantorName(st, me), 'Ensaios ' + (g ? g.name : 'Solo') + ' (' + made + 'x a partir de ' + fmtDate(date) + ')');
+      toast('🔁 ' + made + ' ensaio(s) marcados' + (skipped.length ? ' · pulados (data ocupada): ' + skipped.join(', ') : ''));
+      onClose(); return;
+    }
     const ok = await Store.set('eventos', ev.id, ev);
-    Store.log(editing ? 'edicao' : 'agendamento', cantorName(st, me), (isBlock ? 'Bloqueio' : (g ? g.name : 'Solo')) + ' ' + fmtDate(date));
+    if (ens && editing && editing.seriesId && applyNext) {
+      const next = Object.values(st.eventos).filter(e => e.seriesId === editing.seriesId && e.id !== editing.id && e.date > editing.date);
+      for (const e of next) await Store.update('eventos', e.id, { focus: ev.focus, repertoire: ev.repertoire, place: ev.place, time: ev.time, notes: ev.notes });
+    }
+    Store.log(editing ? 'edicao' : 'agendamento', cantorName(st, me), (isBlock ? 'Bloqueio' : (ens ? 'Ensaio ' : '') + (g ? g.name : 'Solo')) + ' ' + fmtDate(date));
     toast(ok ? (affected.length ? `Salvo! ${affected.length} grupo(s) avisado(s) 🔔` : 'Salvo na agenda ✅') : 'Salvo no aparelho — vai pra nuvem quando a internet voltar');
     onClose();
   };
@@ -1163,11 +1367,15 @@ function EventForm({ me, init, onClose }) {
   const blocked = conflicts.length > 0;
   const conflictLogins = [...new Set(conflicts.map(c => c.login))];
 
-  return html`<${Sheet} title=${editing ? 'Editar compromisso' : isBlock ? 'Bloquear dia' : 'Nova apresentação'} onClose=${onClose}>
+  return html`<${Sheet} title=${editing ? 'Editar compromisso' : isBlock ? 'Bloquear dia' : ens ? 'Novo ensaio' : 'Nova apresentação'} onClose=${onClose}>
     <div style=${{display:'grid', gap:'10px'}}>
       ${err && html`<div class="err">${err}</div>`}
+      ${!isBlock && !editing && html`<div class="seg">
+        <button class=${tipo==='apresentacao'?'on':''} onClick=${() => setTipo('apresentacao')}>🎤 Apresentação</button>
+        <button class=${tipo==='ensaio'?'on':''} onClick=${() => setTipo('ensaio')}>🎼 Ensaio</button>
+      </div>`}
       ${!isBlock && html`<div>
-        <div class="lbl" style=${{marginBottom:'8px'}}>Quem vai cantar?</div>
+        <div class="lbl" style=${{marginBottom:'8px'}}>${ens ? 'Ensaio de quem?' : 'Quem vai cantar?'}</div>
         <div class="chips" style=${{flexWrap:'wrap'}}>
           <button class=${'chip ' + (owner==='solo'?'on':'')} style=${owner==='solo' ? {background:SOLO_COLOR} : null} onClick=${() => setOwner('solo')}>🎙️ Eu (solo)</button>
           ${groups.map(x => html`<button key=${x.id} class=${'chip ' + (owner===x.id?'on':'')} style=${owner===x.id ? {background:x.color} : {borderColor:x.color+'88'}} onClick=${() => setOwner(x.id)}>🎤 ${x.name}</button>`)}
@@ -1177,6 +1385,15 @@ function EventForm({ me, init, onClose }) {
       <input class="inp" type="date" value=${date} onInput=${e => setDate(e.target.value)} />
       <div class="seg">${PERIODOS.map(p => html`<button key=${p.id} class=${period===p.id?'on':''} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}</button>`)}</div>
       ${!isBlock && html`<input class="inp" type="time" value=${time} onInput=${e => setTime(e.target.value)} />`}
+      ${ens && !editing && html`<div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', border:'1px solid rgba(16,185,129,.35)', background:'rgba(16,185,129,.08)'}}>
+        <div class="lbl">🔁 Recorrência</div>
+        <div class="chips" style=${{flexWrap:'wrap'}}>${REPS.map(([id, lb]) => html`<button key=${id} class=${'chip ' + (freq===id?'on':'')} onClick=${() => setFreq(id)}>${lb}</button>`)}</div>
+        ${freq !== 'nao' && html`<div class="row" style=${{gap:'8px', alignItems:'center'}}>
+          <span class="muted">Quantas vezes?</span>
+          <input class="inp" type="number" min="2" max="52" style=${{width:'90px'}} value=${count} onInput=${e => setCount(e.target.value)} />
+        </div>
+        <div class="dim">Vai marcar ${Math.max(2, Math.min(52, Number(count) || 2))} ensaios a partir de ${date ? fmtDate(date) : '—'}. Datas já ocupadas são puladas.</div>`}
+      </div>`}
 
       ${conflicts.length ? html`<div class="err">
         <b>⛔ Data ocupada nesse período — não dá pra agendar:</b>
@@ -1185,15 +1402,20 @@ function EventForm({ me, init, onClose }) {
 
       <div class="lbl">${isBlock ? 'Motivo (só você vê o detalhe)' : 'Onde'}</div>
       <input class="inp" placeholder=${isBlock ? 'Ex: viagem, trabalho…' : 'Igreja / local'} value=${place} onInput=${e => setPlace(e.target.value)} />
-      ${!isBlock && html`<textarea class="inp" rows="2" placeholder="Observação (música, ensaio, contato…)" value=${notes} onInput=${e => setNotes(e.target.value)}></textarea>`}
-      ${!isBlock && html`<div class="seg">
+      ${ens && html`<div class="lbl">🎯 Foco do ensaio</div>
+      <input class="inp" placeholder="Ex: afinação das vozes, entrada do refrão…" value=${focus} onInput=${e => setFocus(e.target.value)} />
+      <div class="lbl">🎵 Repertório e kits de cada música</div>
+      <${RepertoireEditor} value=${repert} onChange=${setRepert} />`}
+      ${ens && editing && editing.seriesId && html`<label class="row" style=${{gap:'8px', alignItems:'center'}}><input type="checkbox" checked=${applyNext} onChange=${e => setApplyNext(e.target.checked)} /> <span class="muted">Aplicar foco, repertório, local e horário aos próximos ensaios da série</span></label>`}
+      ${!isBlock && html`<textarea class="inp" rows="2" placeholder="Observação (contato, detalhes…)" value=${notes} onInput=${e => setNotes(e.target.value)}></textarea>`}
+      ${!isBlock && !ens && html`<div class="seg">
         <button class=${status==='confirmado'?'on':''} onClick=${() => setStatus('confirmado')}>🔵 Confirmado</button>
         <button class=${status==='pendente'?'on':''} onClick=${() => setStatus('pendente')}>🟡 A confirmar</button>
       </div>`}
 
       ${affected.length > 0 && html`<div class="dim">🔔 Essa data vai ficar <b style=${{color:'#fca5a5'}}>indisponível</b> automaticamente em: ${affected.map(a => a.g.name).join(', ')}.</div>`}
 
-      <button class="btn" style=${blocked ? {background:'#475569'} : null} onClick=${trySave}>${blocked ? '⛔ Data ocupada — ver opções' : editing ? 'Salvar alterações' : isBlock ? 'Bloquear dia' : 'Agendar'}</button>
+      <button class="btn" style=${blocked ? {background:'#475569'} : null} onClick=${trySave}>${blocked ? '⛔ Data ocupada — ver opções' : editing ? 'Salvar alterações' : isBlock ? 'Bloquear dia' : ens ? (freq !== 'nao' ? '🔁 Marcar ensaios' : 'Marcar ensaio') : 'Agendar'}</button>
     </div>
     ${ask && html`<${Sheet} title="⛔ Data ocupada" onClose=${() => setAsk(null)}>
       <div style=${{display:'grid', gap:'10px'}}>
@@ -1231,14 +1453,16 @@ function GroupsView({ me, openAgenda }) {
   const groups = myGroups(st, me);
   const [edit, setEdit] = useState(null);
   const [open, setOpen] = useState(null);
+  const [invite, setInvite] = useState(false);
   const today = todayStr();
   const nextOf = (g) => allEvents(st).filter(e => e.ownerType === 'grupo' && e.ownerId === g.id && e.date >= today).sort((a,b) => a.date.localeCompare(b.date))[0];
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
     <${SoloCard} me=${me} />
     <div class="row" style=${{gap:'8px'}}>
       <button class="btn" onClick=${() => setEdit({})}>➕ Criar grupo</button>
-      <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => shareLink('Agenda Musical', 'Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos:', appLink())}>📤 Convidar cantores</button>
+      <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setInvite(true)}>📤 Convidar cantores</button>
     </div>
+    ${invite && html`<${InviteSheet} me=${me} onClose=${() => setInvite(false)} />`}
     ${groups.length === 0 && html`<div class="glass card muted">Você ainda não está em nenhum grupo. Crie um ou peça pra alguém do grupo te adicionar.</div>`}
     <div class="list">
       ${groups.map(g => { const n = nextOf(g); return html`<button key=${g.id} class="item" style=${{borderLeft:'5px solid ' + g.color}} onClick=${() => setOpen(g.id)}>
@@ -1292,6 +1516,7 @@ function GroupForm({ me, g, onClose }) {
 function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
   const st = useStore();
   const [adding, setAdding] = useState(false);
+  const [inviteG, setInviteG] = useState(false);
   const [q, setQ] = useState('');
   const isLeader = g.leader === me;
   const [costs, setCosts] = useState(false);
@@ -1350,8 +1575,10 @@ function GroupSheet({ me, g, onClose, onEdit, onAgenda }) {
           </button>`)}
           ${ql.length < 2 ? html`<div class="dim">Digite pelo menos 2 letras do nome ou o usuário da pessoa.</div>` : candidates.length === 0 && html`<div class="dim">Ninguém encontrado. A pessoa precisa criar a conta dela no app primeiro.</div>`}
         </div>
+        <button class="btn2" style=${{background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => setInviteG(true)}>📤 Convidar quem ainda não tem conta (com mensagem)</button>
         <button class="btn2" onClick=${() => { setAdding(false); setQ(''); }}>Pronto</button>
       </div>` : html`<button class="btn2 btn-green" onClick=${() => setAdding(true)}>➕ Adicionar integrante</button>`}
+      ${inviteG && html`<${InviteSheet} me=${me} group=${g} onClose=${() => setInviteG(false)} />`}
       ${isLeader && html`<button class="btn2 btn-red" onClick=${delGroup}>🗑️ Apagar grupo</button>`}
     </div>
     ${costs && html`<${CostForm} g=${g} me=${me} onClose=${() => setCosts(false)} />`}
@@ -1509,14 +1736,19 @@ function ProfileView({ me, onLogout, installPrompt }) {
   const [name, setName] = useState(c.name || '');
   const [phone, setPhone] = useState(c.phone || '');
   const [np, setNp] = useState('');
+  const [city, setCity] = useState(c.city || '');
+  const [bio, setBio] = useState(c.bio || '');
+  const [q, setQ] = useState(c.q || ''); const [a, setA] = useState('');
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   // Salva sozinho: 0,8s depois de parar de digitar.
   useEffect(() => {
-    if (name === (c.name||'') && phone === (c.phone||'')) return;
-    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim() }); toast('Salvo ✅'); } }, 800);
+    if (name === (c.name||'') && phone === (c.phone||'') && city === (c.city||'') && bio === (c.bio||'')) return;
+    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim(), city: city.trim(), bio: bio.trim() }); toast('Salvo ✅'); } }, 800);
     return () => clearTimeout(t);
-  }, [name, phone]);
+  }, [name, phone, city, bio]);
+  const vozes = c.vozes || [];
+  const toggleVoz = (v) => { const n = vozes.includes(v) ? vozes.filter(x => x !== v) : [...vozes, v]; Store.update('cantores', me, { vozes: n }); };
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
     <div class="glass card" style=${{display:'grid', gap:'10px'}}>
       <div class="row"><${Avatar} name=${name} img=${c.photo} size=${52} /><div><div style=${{fontWeight:800, fontSize:'17px'}}>${name}</div><div class="dim">Usuário: <b>${me}</b></div></div></div>
@@ -1526,12 +1758,22 @@ function ProfileView({ me, onLogout, installPrompt }) {
       <input class="inp" value=${name} onInput=${e => setName(e.target.value)} />
       <div class="lbl">WhatsApp</div>
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
+      <div class="lbl">Cidade</div>
+      <input class="inp" placeholder="Ex: Timbó - SC" value=${city} onInput=${e => setCity(e.target.value)} />
+      <div class="lbl">Sua voz / naipe (os kits dela aparecem primeiro nos ensaios)</div>
+      <div class="chips" style=${{flexWrap:'wrap'}}>${['Soprano','Contralto','Tenor','Barítono','Baixo','Instrumentista'].map(v => html`<button key=${v} class=${'chip ' + (vozes.includes(v) ? 'on' : '')} onClick=${() => toggleVoz(v)}>${vozes.includes(v) ? '✅ ' : ''}${v}</button>`)}</div>
+      <div class="lbl">Sobre você</div>
+      <textarea class="inp" rows="3" placeholder="Conte um pouco do seu ministério, igreja, experiência…" value=${bio} onInput=${e => setBio(e.target.value)}></textarea>
       <div class="dim">As mudanças salvam sozinhas.</div>
     </div>
     <div class="glass card" style=${{display:'grid', gap:'10px'}}>
       <div class="lbl">Trocar senha</div>
       <${PasswordInput} value=${np} onChange=${setNp} placeholder="Nova senha" />
       <button class="btn2" disabled=${np.length < 4} onClick=${async () => { await Store.update('cantores', me, { passHash: simpleHash(np) }); setNp(''); toast('Senha trocada ✅'); }}>Salvar nova senha</button>
+      <div class="lbl" style=${{marginTop:'6px'}}>Pergunta de segurança (pra recuperar a senha)</div>
+      <input class="inp" placeholder="Pergunta" value=${q} onInput=${e => setQ(e.target.value)} />
+      <input class="inp" placeholder="Nova resposta" value=${a} onInput=${e => setA(e.target.value)} />
+      <button class="btn2" disabled=${!q.trim() || !a.trim()} onClick=${async () => { await Store.update('cantores', me, { q: q.trim(), aHash: simpleHash(a.trim().toLowerCase()) }); setA(''); toast('Pergunta de segurança salva ✅'); }}>Salvar pergunta e resposta</button>
     </div>
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
@@ -1545,6 +1787,61 @@ function ProfileView({ me, onLogout, installPrompt }) {
   </div>`;
 }
 
+// ---------- SUGESTÕES ----------
+// Guardadas junto do histórico (coleção agenda_log, tipo "sugestao"), então não precisa mexer nas regras do banco.
+const SUG_STATUS = { nova:['🆕 Nova','#f59e0b'], lida:['👀 Vista','#3b82f6'], feita:['✅ Feita','#10b981'], recusada:['✖️ Não vai entrar','#64748b'] };
+const fmtAtFull = (t) => { const d = new Date(t); return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+function SuggestionsView({ me }) {
+  const st = useStore();
+  const [txt, setTxt] = useState('');
+  const mine = Object.values(st.log).filter(l => l.type === 'sugestao' && l.login === me).sort((a,b) => (b.at||0) - (a.at||0));
+  const send = async () => {
+    const t = txt.trim(); if (t.length < 3) return;
+    await Store.set('log', uid('sug'), { type:'sugestao', login: me, who: cantorName(st, me), detail: t, at: Date.now(), status:'nova', reply:'' });
+    setTxt(''); toast('Sugestão enviada! Obrigado 💡');
+  };
+  return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
+    <div class="glass card" style=${{display:'grid', gap:'10px'}}>
+      <div style=${{fontWeight:800, fontSize:'16px'}}>💡 Mande sua sugestão</div>
+      <div class="muted">Ideia, melhoria ou algo que não funcionou? Escreva aqui que chega direto pro desenvolvedor.</div>
+      <textarea class="inp" rows="4" placeholder="Ex: seria bom ter…" value=${txt} onInput=${e => setTxt(e.target.value)}></textarea>
+      <button class="btn" disabled=${txt.trim().length < 3} onClick=${send}>Enviar sugestão</button>
+    </div>
+    ${mine.length > 0 && html`<div class="lbl">Suas sugestões</div>`}
+    <div class="list">${mine.map(l => { const [lab, col] = SUG_STATUS[l.status || 'nova'] || SUG_STATUS.nova; return html`<div key=${l.id} class="item" style=${{display:'grid', gap:'6px', borderLeft:'5px solid ' + col}}>
+      <div>${l.detail}</div>
+      <div class="row" style=${{justifyContent:'space-between'}}><span class="dim">${fmtAtFull(l.at)}</span><span class="sync" style=${{background: col + '22', color: col}}>${lab}</span></div>
+      ${l.reply && html`<div class="okbox" style=${{padding:'8px 10px'}}><b>Resposta:</b> ${l.reply}</div>`}
+    </div>`; })}</div>
+  </div>`;
+}
+function DevSuggestions() {
+  const st = useStore();
+  const [filtro, setFiltro] = useState('abertas');
+  const [resp, setResp] = useState({});
+  const all = Object.values(st.log).filter(l => l.type === 'sugestao').sort((a,b) => (b.at||0) - (a.at||0));
+  const list = all.filter(l => filtro === 'todas' ? true : ['nova','lida'].includes(l.status || 'nova'));
+  const setStatus = (l, status) => Store.update('log', l.id, { status });
+  const reply = async (l) => { const r = (resp[l.id] || '').trim(); if (!r) return; await Store.update('log', l.id, { reply: r, replyAt: Date.now(), status: (l.status === 'nova' ? 'lida' : l.status) }); setResp(o => ({ ...o, [l.id]: '' })); toast('Resposta enviada'); };
+  return html`<div style=${{display:'grid', gap:'10px'}}>
+    <div class="seg">
+      <button class=${filtro==='abertas'?'on':''} onClick=${() => setFiltro('abertas')}>Em aberto (${all.filter(l => ['nova','lida'].includes(l.status || 'nova')).length})</button>
+      <button class=${filtro==='todas'?'on':''} onClick=${() => setFiltro('todas')}>Todas (${all.length})</button>
+    </div>
+    ${list.length === 0 && html`<div class="glass card muted">Nenhuma sugestão ${filtro === 'abertas' ? 'em aberto' : 'ainda'}.</div>`}
+    ${list.map(l => { const [lab, col] = SUG_STATUS[l.status || 'nova'] || SUG_STATUS.nova; return html`<div key=${l.id} class="glass card" style=${{display:'grid', gap:'8px', borderLeft:'5px solid ' + col}}>
+      <div class="row" style=${{justifyContent:'space-between'}}><b>${l.who || l.login}</b><span class="dim">${fmtAtFull(l.at)}</span></div>
+      <div>${l.detail}</div>
+      <div class="row" style=${{gap:'6px', flexWrap:'wrap'}}>${Object.entries(SUG_STATUS).map(([k, [t, c]]) => html`<button key=${k} class="chip" style=${(l.status || 'nova') === k ? {background: c, color:'#fff', borderColor:'transparent'} : null} onClick=${() => setStatus(l, k)}>${t}</button>`)}</div>
+      ${l.reply && html`<div class="okbox" style=${{padding:'8px 10px'}}><b>Sua resposta:</b> ${l.reply}</div>`}
+      <div class="row" style=${{gap:'6px'}}>
+        <input class="inp" style=${{padding:'9px 11px', fontSize:'14px'}} placeholder="Responder pro cantor…" value=${resp[l.id] || ''} onInput=${e => setResp(o => ({ ...o, [l.id]: e.target.value }))} />
+        <button class="btn2" onClick=${() => reply(l)}>Enviar</button>
+      </div>
+    </div>`; })}
+  </div>`;
+}
+
 // ---------- PAINEL DO DESENVOLVEDOR ----------
 function DevView() {
   const st = useStore();
@@ -1554,7 +1851,8 @@ function DevView() {
   const cantores = Object.values(st.cantores).sort((a,b) => (a.name||'').localeCompare(b.name||'','pt-BR'));
   const grupos = Object.values(st.grupos).sort((a,b) => (a.name||'').localeCompare(b.name||'','pt-BR'));
   const eventos = allEvents(st);
-  const logs = Object.values(st.log).sort((a,b) => (b.at||0) - (a.at||0)).slice(0, 80);
+  const logs = Object.values(st.log).filter(l => l.type !== 'sugestao').sort((a,b) => (b.at||0) - (a.at||0)).slice(0, 80);
+  const novasSug = Object.values(st.log).filter(l => l.type === 'sugestao' && (l.status || 'nova') === 'nova').length;
   const ql = q.toLowerCase();
   const futuro = eventos.filter(e => e.date >= todayStr()).length;
 
@@ -1585,6 +1883,7 @@ function DevView() {
       <button class=${tab==='cantores'?'on':''} onClick=${() => setTab('cantores')}>Cantores</button>
       <button class=${tab==='grupos'?'on':''} onClick=${() => setTab('grupos')}>Grupos</button>
       <button class=${tab==='log'?'on':''} onClick=${() => setTab('log')}>Histórico</button>
+      <button class=${tab==='sug'?'on':''} onClick=${() => setTab('sug')}>💡 Sugestões${novasSug ? ' (' + novasSug + ')' : ''}</button>
     </div>
     ${tab !== 'log' && html`<input class="inp" placeholder="🔎 Buscar…" value=${q} onInput=${e => setQ(e.target.value)} />`}
     ${tab === 'cantores' && html`<div class="list">${cantores.filter(c => !q || (c.name||'').toLowerCase().includes(ql)).map(c => html`<div key=${c.id} class="item" style=${{flexWrap:'wrap', opacity: c.removed ? .5 : 1}}>
@@ -1606,6 +1905,7 @@ function DevView() {
       </div>
       <button class="btn2 btn-red" style=${{padding:'7px 9px'}} onClick=${() => { if (g.removed || confirm('Apagar o grupo ' + g.name + '?')) Store.update('grupos', g.id, { removed: !g.removed }); }}>${g.removed ? '♻️' : '🗑️'}</button>
     </div>`)}</div>`}
+    ${tab === 'sug' && html`<${DevSuggestions} />`}
     ${tab === 'log' && html`<div class="glass card"><table class="t"><tbody>${logs.map(l => html`<tr key=${l.id}>
       <td style=${{width:'26px'}}>${LOGIC[l.type] || '•'}</td>
       <td><b>${l.who}</b> <span class="muted">${l.detail}</span></td>
@@ -1765,8 +2065,10 @@ async function notify(title, body) {
   } catch(e) {}
 }
 function avisoText(st, a) {
+  if (a.kind === 'resp') return ['💡 Resposta à sua sugestão', a.sug.reply];
   if (a.kind === 'pedido') return ['⛪ Novo pedido: ' + a.g.name, (a.ev.church?.name || 'Uma igreja') + ' quer agendar em ' + fmtDate(a.ev.date) + ' (' + (PER[a.ev.period]?.label || '') + ')'];
   if (a.kind === 'obs') return ['💬 ' + cantorName(st, a.obs.by) + (a.g ? ' · ' + a.g.name : ''), a.obs.text];
+  if (a.kind === 'novo' && isEnsaio(a.ev)) return ['🎼 ' + a.g.name + ': ' + (a.ev.seriesId ? 'ensaios recorrentes' : 'novo ensaio'), 'A partir de ' + fmtDateLong(a.ev.date) + (a.ev.focus ? ' · foco: ' + a.ev.focus : '') + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
   if (a.kind === 'novo') return ['📅 ' + a.g.name + ': nova apresentação', fmtDateLong(a.ev.date) + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
   return ['🔴 ' + a.g.name + ' indisponível em ' + fmtDate(a.ev.date), a.who.map(w => cantorName(st, w)).join(', ') + ' tem outro compromisso'];
 }
@@ -1840,7 +2142,7 @@ function App() {
 
   const tabs = session.dev
     ? [['dev','🔑','Painel'], ['todos','🌐','Todos']]
-    : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['avisos','🔔','Avisos'], ['perfil','👤','Perfil']];
+    : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','👤','Perfil']];
   const title = session.dev ? 'Desenvolvedor' : (cantorName(st, me) || '').split(' ')[0];
 
   return html`
@@ -1850,7 +2152,7 @@ function App() {
         <div class="logo">🎶</div>
         <div style=${{flex:1, minWidth:0}}>
           <div class="grad-text" style=${{fontWeight:900, fontSize:'17px'}}>Agenda Musical</div>
-          <div class="dim">Olá, ${title}</div>
+          ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px'}}>Olá, ${title} · ✏️ editar perfil</button>`}
         </div>
         <${SyncBadge} />
         ${session.dev && html`<button class="btn2" style=${{padding:'7px 10px'}} onClick=${logout}>Sair</button>`}
@@ -1859,8 +2161,9 @@ function App() {
       ${tab === 'agenda' && html`<${AgendaView} me=${me} ctx=${ctx} setCtx=${setCtx} showChips=${true} />`}
       ${tab === 'grupos' && html`<${GroupsView} me=${me} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`}
       ${tab === 'todos' && session.dev && html`<${AllView} me=${me} />`}
-      ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => setAvisoDay(a)} />`}
+      ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => a.kind === 'resp' ? setTab('sug') : setAvisoDay(a)} />`}
       ${tab === 'perfil' && html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} />`}
+      ${tab === 'sug' && html`<${SuggestionsView} me=${me} />`}
       ${tab === 'dev' && html`<${DevView} />`}
 
       ${avisoDay && html`<${DaySheet} me=${me}
