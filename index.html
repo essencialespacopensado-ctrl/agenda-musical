@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.15';
+const APP_VERSION = '2026-10-11.16';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -405,6 +405,7 @@ function participantsOf(st, ev) {
 const isEnsaio = (ev) => ev && ev.kind === 'ensaio';
 // Tipos de participação (botões no convite das igrejas e no agendamento).
 const PARTS = ['🎤 Louvor ao vivo','🎶 Momento de louvor','💿 Playback','🎵 Mensagem musical','👧 História das crianças','⛪ Culto completo'];
+const FUNCOES = ['Soprano','Contralto','Tenor','Barítono','Baixo','1ª voz','2ª voz','3ª voz','Líder','Teclado','Violão','Bateria','Baixo (instr.)','Som'];
 function PartChips({ value, onChange }) {
   const v = value || [];
   return html`<div class="chips" style=${{flexWrap:'wrap'}}>${PARTS.map(p => html`<button type="button" key=${p} class=${'chip ' + (v.includes(p) ? 'on' : '')} style=${v.includes(p) ? {background:'linear-gradient(135deg,#ec4899,#8b5cf6)', borderColor:'#f0abfc', color:'#fff', boxShadow:'0 0 12px -3px rgba(236,72,153,.9)'} : null} onClick=${() => onChange(v.includes(p) ? v.filter(x => x !== p) : [...v, p])}>${v.includes(p) ? '✅ ' : ''}${p}</button>`)}</div>`;
@@ -1697,6 +1698,7 @@ function GroupSheet(props) {
 function GroupPanel({ me, g, onClose, onEdit, onAgenda }) {
   const st = useStore();
   const [mkAcct, setMkAcct] = useState(false);
+  const [fn, setFn] = useState(null);
   const isAcct = g.account === me;
   const [adding, setAdding] = useState(false);
   const [inviteG, setInviteG] = useState(false);
@@ -1747,8 +1749,9 @@ function GroupPanel({ me, g, onClose, onEdit, onAgenda }) {
         <${Avatar} name=${cantorName(st, m)} />
         <div style=${{flex:1}}>
           <div style=${{fontWeight:700}}>${cantorName(st, m)}${m === me ? ' (você)' : ''}</div>
-          <div class="dim">${g.leader === m ? '⭐ Responsável' : 'Integrante'}</div>
+          <div class="dim">${g.leader === m ? '⭐ Responsável' : 'Integrante'}${((g.funcoes||{})[m]||[]).length ? ' · ' + g.funcoes[m].join(', ') : ''}</div>
         </div>
+        ${isLeader && html`<button class="btn2" title="Funções" style=${{padding:'8px 10px'}} onClick=${() => setFn(m)}>🎚️</button>`}
         ${wa && m !== me && html`<a href=${wa} target="_blank" class="btn2" style=${{textDecoration:'none', padding:'8px 10px'}}>💬</a>`}
         ${(isLeader || m === me) && html`<button class="btn2 btn-red" style=${{padding:'8px 10px'}} onClick=${() => removeM(m)}>${m === me ? 'Sair' : '✕'}</button>`}
       </div>`; })}</div>
@@ -1768,6 +1771,13 @@ function GroupPanel({ me, g, onClose, onEdit, onAgenda }) {
     </div>
     ${costs && html`<${CostForm} g=${g} me=${me} onClose=${() => setCosts(false)} />`}
     ${mkAcct && html`<${GroupAcctForm} g=${g} me=${me} onClose=${() => setMkAcct(false)} />`}
+    ${fn && html`<${Sheet} title=${'🎚️ Funções de ' + cantorName(st, fn)} onClose=${() => setFn(null)}>
+      <div style=${{display:'grid', gap:'10px'}}>
+        <div class="muted">Toque pra marcar a função (pode mais de uma). Salva na hora.</div>
+        <div class="chips" style=${{flexWrap:'wrap'}}>${FUNCOES.map(f => { const cur = (g.funcoes||{})[fn] || []; const on = cur.includes(f); return html`<button key=${f} class=${'chip ' + (on ? 'on' : '')} style=${on ? {background:'linear-gradient(135deg,#10b981,#06b6d4)', color:'#fff'} : null} onClick=${() => Store.update('grupos', g.id, { funcoes: { ...(g.funcoes||{}), [fn]: on ? cur.filter(x => x !== f) : [...cur, f] } })}>${on ? '✅ ' : ''}${f}</button>`; })}</div>
+        <button class="btn" onClick=${() => setFn(null)}>Pronto</button>
+      </div>
+    </${Sheet}>`}
   </div>`;
 }
 
@@ -1802,7 +1812,7 @@ function GroupAcctForm({ g, me, onClose }) {
 }
 
 // Perfil da conta do grupo.
-function GroupProfile({ me, onLogout, installPrompt }) {
+function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
   const st = useStore();
   const c = st.cantores[me] || {}; const g = st.grupos[c.groupId];
   const [edit, setEdit] = useState(false); const [np, setNp] = useState('');
@@ -1815,6 +1825,7 @@ function GroupProfile({ me, onLogout, installPrompt }) {
       <div class="lbl">WhatsApp do responsável</div>
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
     </div>
+    ${g && html`<div class="glass card"><div style=${{fontWeight:900, fontSize:'16px', marginBottom:'10px'}}>👥 Integrantes e funções</div><${GroupPanel} me=${me} g=${g} onClose=${() => {}} onEdit=${() => setEdit(true)} onAgenda=${onAgenda} /></div>`}
     <div class="glass card" style=${{display:'grid', gap:'10px'}}>
       <div class="lbl">Trocar senha do grupo</div>
       <${PasswordInput} value=${np} onChange=${setNp} placeholder="Nova senha" />
@@ -1973,7 +1984,7 @@ function NotifyCard() {
 }
 
 // ---------- PERFIL ----------
-function ProfileView({ me, onLogout, installPrompt }) {
+function ProfileView({ me, onLogout, installPrompt, openAgenda }) {
   const st = useStore();
   const c = st.cantores[me] || {};
   const [name, setName] = useState(c.name || '');
@@ -2021,6 +2032,8 @@ function ProfileView({ me, onLogout, installPrompt }) {
       <input class="inp" placeholder="Nova resposta" value=${a} onInput=${e => setA(e.target.value)} />
       <button class="btn2" disabled=${!q.trim() || !a.trim()} onClick=${async () => { await Store.update('cantores', me, { q: q.trim(), aHash: simpleHash(a.trim().toLowerCase()) }); setA(''); toast('Pergunta de segurança salva ✅'); }}>Salvar pergunta e resposta</button>
     </div>
+    <div class="lbl" style=${{marginTop:'4px'}}>🎤 Seus grupos, link solo e convites</div>
+    <${GroupsView} me=${me} openAgenda=${openAgenda} />
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
       <div style=${{fontWeight:800}}>📲 Instalar no celular</div>
@@ -2401,8 +2414,8 @@ function App() {
   const tabs = session.dev
     ? [['dev','🔑','Painel'], ['todos','🌐','Todos']]
     : session.group
-    ? [['agenda','📅','Agenda'], ['integrantes','👥','Integrantes'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','🎤','Grupo']]
-    : [['agenda','📅','Agenda'], ['grupos','🎤','Grupos'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','👤','Perfil']];
+    ? [['agenda','📅','Agenda'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','⚙️','Configurações']]
+    : [['agenda','📅','Agenda'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','⚙️','Configurações']];
   const title = session.dev ? 'Desenvolvedor' : callName(st, me);
 
   return html`
@@ -2412,7 +2425,7 @@ function App() {
         <div class="logo">🎶</div>
         <div style=${{flex:1, minWidth:0}}>
           <div class="grad-text" style=${{fontWeight:900, fontSize:'17px'}}>Agenda Musical</div>
-          ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px'}}>Olá, ${title} · ✏️ editar perfil</button>`}
+          ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px'}}>Olá, ${title} · ⚙️ configurações</button>`}
         </div>
         <${SyncBadge} />
         ${session.dev && html`<button class="btn2" style=${{padding:'7px 10px'}} onClick=${logout}>Sair</button>`}
@@ -2423,7 +2436,7 @@ function App() {
       ${tab === 'grupos' && html`<${GroupsView} me=${me} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`}
       ${tab === 'todos' && session.dev && html`<${AllView} me=${me} />`}
       ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => a.kind === 'resp' ? setTab('sug') : setAvisoDay(a)} />`}
-      ${tab === 'perfil' && (session.group ? html`<${GroupProfile} me=${me} onLogout=${logout} installPrompt=${installPrompt} />` : html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} />`)}
+      ${tab === 'perfil' && (session.group ? html`<${GroupProfile} me=${me} onLogout=${logout} installPrompt=${installPrompt} onAgenda=${() => setTab('agenda')} />` : html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`)}
       ${tab === 'sug' && html`<${SuggestionsView} me=${me} />`}
       ${tab === 'dev' && html`<${DevView} />`}
 
