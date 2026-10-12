@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.16';
+const APP_VERSION = '2026-10-11.17';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -868,13 +868,13 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
   return html`
     <div class="fade-up" style=${{display:'grid', gap:'12px'}}>
       ${showChips && ctx.type === 'pessoa' && ctx.login === me && html`<${AgendaBanner} me=${me} onPick=${setDay} />`}
-      ${g && g.account && g.account === me && html`<${AgendaBanner} me=${me} gid=${g.id} onPick=${setDay} />`}
-      ${showChips && html`<div class="chips">
+      ${g && !readOnly && html`<${AgendaBanner} me=${me} gid=${g.id} onPick=${setDay} />`}
+      ${showChips && groups.length > 0 && html`<div class="chips">
         <button class=${'chip ' + (ctx.type==='pessoa' ? 'on' : '')} style=${ctx.type==='pessoa' ? {background:'linear-gradient(135deg,var(--accent-1),var(--accent-2))'} : null} onClick=${() => setCtx({ type:'pessoa', login:me })}>👤 Minha agenda</button>
         ${groups.map(x => html`<button key=${x.id} class=${'chip ' + (ctx.type==='grupo' && ctx.id===x.id ? 'on' : '')} style=${ctx.type==='grupo' && ctx.id===x.id ? {background:x.color} : {borderColor:x.color+'88'}} onClick=${() => setCtx({ type:'grupo', id:x.id })}>🎤 ${x.name}</button>`)}
       </div>`}
 
-      <div class="glass card">
+      ${readOnly && html`<div class="glass card">
         ${g && html`<div class="row" style=${{marginBottom:'10px'}}>
           <div class="sq" style=${{background:g.color, width:'14px', height:'14px'}}></div>
           <div style=${{fontWeight:800}}>${g.name}</div>
@@ -895,7 +895,7 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
           ${myGroups(st, ctx.login).map(x => html`<span key=${x.id}><i class="dot" style=${{background:x.color}}></i>${x.name}</span>`)}
           <span><i class="dot" style=${{background:BLOCK_COLOR}}></i>Pessoal</span>
         </div>`}
-      </div>
+      </div>`}
 
       ${canEditCtx && html`<div class="row">
         <button class="btn" onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx })}>➕ Agendar apresentação</button>
@@ -904,13 +904,13 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
       </div>`}
       ${me && html`<button class="btn2" style=${{background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareAgenda(st, ctx, me)}>📤 Compartilhar agenda (imagem)</button>`}
 
-      <div>
+      ${readOnly && html`<div>
         <div class="lbl" style=${{marginBottom:'8px'}}>Próximos compromissos</div>
         ${upcoming.length ? html`<div class="list">${upcoming.map(e => html`<${EventRow} key=${e.id} ev=${e} onClick=${() => setDay(e.date)} />`)}</div>`
           : html`<div class="dim">Nada agendado ainda.</div>`}
-      </div>
+      </div>`}
 
-      ${g && busyUpcoming.length > 0 && html`<div>
+      ${readOnly && g && busyUpcoming.length > 0 && html`<div>
         <div class="lbl" style=${{marginBottom:'8px'}}>Datas indisponíveis (integrante ocupado)</div>
         <div class="list">${busyUpcoming.map(({e, who}) => html`<button key=${e.id} class="item" onClick=${() => setDay(e.date)}>
           <div style=${{fontSize:'20px'}}>🔴</div>
@@ -1532,7 +1532,11 @@ function EventForm({ me, init, onClose }) {
         </div>
       </div>`}
       <div class="lbl">${ens && !editing && freq !== 'nao' ? 'A partir de' : 'Quando'}</div>
-      <input class="inp" type="date" value=${date} onInput=${e => setDate(e.target.value)} />
+      <input class="inp" type="date" value=${date} onInput=${e => { setDate(e.target.value); if (e.target.value) { const d = parseYmd(e.target.value); setCalM(new Date(d.getFullYear(), d.getMonth(), 1)); } }} />
+      ${!(ens && !editing) && html`<div>
+        <div class="dim" style=${{marginBottom:'6px'}}>Toque no dia no calendário (vermelho = ocupado nesse período):</div>
+        <${Calendar} month=${calM} setMonth=${setCalM} renderDay=${(d) => d === date ? { cls:'st-ens', mark:'✔' } : (conflictsFor(st, who, d, period, editing?.id).length ? { cls:'st-busy' } : (d >= todayStr() ? { cls:'st-free' } : null))} onPick=${(d) => { if (d < todayStr()) return toast('Esse dia já passou'); setDate(d); }} />
+      </div>`}
       <div class="seg">${PERIODOS.map(p => html`<button key=${p.id} class=${period===p.id?'on':''} onClick=${() => setPeriod(p.id)}>${p.ic} ${p.label}</button>`)}</div>
       ${!isBlock && html`<input class="inp" type="time" value=${time} onInput=${e => setTime(e.target.value)} />`}
       ${ens && !editing && html`<div style=${{display:'grid', gap:'8px', padding:'10px', borderRadius:'12px', border:'1px solid rgba(16,185,129,.35)', background:'rgba(16,185,129,.08)'}}>
@@ -1811,6 +1815,35 @@ function GroupAcctForm({ g, me, onClose }) {
   </${Sheet}>`;
 }
 
+// Conta de cantor que na verdade é de um grupo → vira conta de grupo.
+// Os compromissos "solo" dela passam a ser do grupo, e o link antigo (?solo=) continua funcionando.
+async function convertToGroup(st, me, tipo) {
+  const c = st.cantores[me] || {};
+  const gid = uid('gr');
+  await Store.set('grupos', gid, { name: c.name || me, tipo: tipo || 'Grupo', color: CORES[activeGrupos(st).length % CORES.length], logo: c.photo || '', members: [], leader: null, account: me, phone: c.phone || '', cost: c.cost || null, createdBy: me, createdAt: Date.now(), removed:false });
+  await Store.update('cantores', me, { isGroup: true, groupId: gid });
+  for (const e of Object.values(st.eventos)) {
+    if (e.ownerType === 'solo' && e.ownerId === me) await Store.update('eventos', e.id, { ownerType:'grupo', ownerId: gid });
+  }
+  for (const g of activeGrupos(st)) {
+    if ((g.members || []).includes(me)) await Store.update('grupos', g.id, { members: g.members.filter(m => m !== me) });
+  }
+  Store.log('grupo', c.name || me, 'transformou a conta em conta de grupo');
+  return gid;
+}
+
+function BecomeGroupCard({ me, onDone }) {
+  const st = useStore();
+  const [open, setOpen] = useState(false); const [tipo, setTipo] = useState('Quarteto'); const [busy, setBusy] = useState(false);
+  return html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
+    <div style=${{fontWeight:800}}>🎤 Esta conta é de um grupo?</div>
+    <div class="dim">Se esta conta foi criada para um grupo (e não para uma pessoa), transforme em <b>conta de grupo</b>. Os compromissos passam a ser do grupo (não aparecem mais como solo) e o link que as igrejas já têm continua funcionando.</div>
+    ${!open ? html`<button class="btn2" onClick=${() => setOpen(true)}>Transformar em conta de grupo</button>` : html`
+      <div class="chips" style=${{flexWrap:'wrap'}}>${TIPOS.map(t => html`<button key=${t} class=${'chip ' + (tipo===t?'on':'')} onClick=${() => setTipo(t)}>${t}</button>`)}</div>
+      <button class="btn" disabled=${busy} onClick=${async () => { if (!confirm('Transformar "' + cantorName(st, me) + '" em conta de grupo?')) return; setBusy(true); const gid = await convertToGroup(st, me, tipo); setBusy(false); toast('Agora é conta de grupo 🎤 Adicione os integrantes em Configurações'); onDone && onDone(gid); }}>${busy ? 'Transformando…' : 'Confirmar: é um grupo'}</button>`}
+  </div>`;
+}
+
 // Perfil da conta do grupo.
 function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
   const st = useStore();
@@ -1984,7 +2017,7 @@ function NotifyCard() {
 }
 
 // ---------- PERFIL ----------
-function ProfileView({ me, onLogout, installPrompt, openAgenda }) {
+function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup }) {
   const st = useStore();
   const c = st.cantores[me] || {};
   const [name, setName] = useState(c.name || '');
@@ -2041,6 +2074,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda }) {
         : isIOS ? html`<div class="muted">No iPhone: toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</div>`
         : html`<div class="muted">No Android: toque nos <b>3 pontinhos</b> do navegador → <b>Instalar app</b> (ou "Adicionar à tela inicial").</div>`}
     </div>`}
+    <${BecomeGroupCard} me=${me} onDone=${onBecomeGroup} />
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
     <div class="dim" style=${{textAlign:'center'}}>Agenda Musical · v${APP_VERSION}</div>
   </div>`;
@@ -2177,7 +2211,7 @@ function DevView() {
 function PublicBooking({ gid, solo }) {
   const st = useStore();
   const status = useStatus();
-  const g = solo ? soloTarget(st, gid) : st.grupos[gid];
+  const g = solo ? (st.cantores[gid]?.isGroup ? st.grupos[st.cantores[gid].groupId] : soloTarget(st, gid)) : st.grupos[gid];
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [day, setDay] = useState(null);
   const [done, setDone] = useState(null);
@@ -2436,7 +2470,7 @@ function App() {
       ${tab === 'grupos' && html`<${GroupsView} me=${me} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`}
       ${tab === 'todos' && session.dev && html`<${AllView} me=${me} />`}
       ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => a.kind === 'resp' ? setTab('sug') : setAvisoDay(a)} />`}
-      ${tab === 'perfil' && (session.group ? html`<${GroupProfile} me=${me} onLogout=${logout} installPrompt=${installPrompt} onAgenda=${() => setTab('agenda')} />` : html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} />`)}
+      ${tab === 'perfil' && (session.group ? html`<${GroupProfile} me=${me} onLogout=${logout} installPrompt=${installPrompt} onAgenda=${() => setTab('agenda')} />` : html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} onBecomeGroup=${(gid) => { const s2 = { login: me, group: gid }; try { (localStorage.getItem(SESSION_KEY) ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify(s2)); } catch(e) {} setSession(s2); setCtx({ type:'grupo', id: gid }); setTab('perfil'); }} />`)}
       ${tab === 'sug' && html`<${SuggestionsView} me=${me} />`}
       ${tab === 'dev' && html`<${DevView} />`}
 
