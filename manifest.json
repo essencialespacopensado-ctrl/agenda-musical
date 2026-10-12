@@ -1,7 +1,7 @@
 {
-  "name": "Agenda Musical",
-  "short_name": "Agenda Musical",
-  "description": "Agenda integrada de cantores, solos, duetos, trios, quartetos e grupos musicais.",
+  "name": "Super Agenda",
+  "short_name": "Super Agenda",
+  "description": "Super Agenda — agenda de cantores, grupos, diretores de música e anciãos.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

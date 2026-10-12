@@ -6,9 +6,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Agenda Musical">
+<meta name="apple-mobile-web-app-title" content="Super Agenda">
 <meta name="theme-color" content="#0b1120">
-<title>Agenda Musical</title>
+<title>Super Agenda</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -165,7 +165,7 @@
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.min.js"></script>
 <script>
   // Mesmo banco de dados (Firebase) do Gerenciador de Culto, mas em coleções próprias
-  // (agenda_*), então os dados da Agenda Musical nunca se misturam com os das igrejas.
+  // (agenda_*), então os dados da Super Agenda nunca se misturam com os das igrejas.
   window.__FIREBASE_CONFIG__ = {
     apiKey: "AIzaSyAHE_hlXxmRXn0MoZEPNbMxqZDSjM9Zk0U",
     authDomain: "gerenciador-de-culto.firebaseapp.com",
@@ -201,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-12.01';
+const APP_VERSION = '2026-10-12.02';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -301,8 +301,8 @@ async function shareLink(title, text, url) {
 const defChurchGroup = (g) => 'Agende uma apresentação do ' + g.name + ' na sua igreja. Veja as datas livres e o custo do deslocamento:';
 const defChurchSolo = (name) => 'Convide ' + name + ' para cantar na sua igreja. Veja as datas livres e o custo do deslocamento:';
 const defInvite = (myName, group) => group
-  ? 'Olá! Aqui é ' + myName + '. Quero te convidar pra fazer parte do ' + group.name + ' na Agenda Musical. Baixe o app, crie sua conta e me avise o seu usuário que eu te adiciono no grupo. 🎶'
-  : 'Olá! Aqui é ' + myName + '. Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos. 🎶';
+  ? 'Olá! Aqui é ' + myName + '. Quero te convidar pra fazer parte do ' + group.name + ' na Super Agenda. Baixe o app, crie sua conta e me avise o seu usuário que eu te adiciono no grupo. 🎶'
+  : 'Olá! Aqui é ' + myName + '. Baixe a Super Agenda e crie sua conta pra gente organizar as apresentações juntos. 🎶';
 const shareGroup = (g) => shareLink(g.name + ' — agenda', (g.churchMsg || '').trim() || defChurchGroup(g), bookingLink(g.id));
 const shareSolo = (name, login, msg) => shareLink(name + ' — agenda', (msg || '').trim() || defChurchSolo(name), soloLink(login));
 const appLink = () => location.origin + location.pathname;
@@ -647,8 +647,8 @@ function Brand({ sub }) {
   return html`
     <div style=${{textAlign:'center', marginBottom:'20px'}}>
       <div class="breathe logo" style=${{width:'62px', height:'62px', borderRadius:'20px', fontSize:'30px', margin:'0 auto 10px', boxShadow:'0 12px 28px -10px rgba(236,72,153,.6)'}}>🎶</div>
-      <div class="grad-text" style=${{fontWeight:900, fontSize:'23px'}}>Agenda Musical</div>
-      <div class="muted" style=${{marginTop:'3px'}}>${sub || 'Solos, duetos, trios, quartetos e grupos — tudo numa agenda só'}</div>
+      <div class="grad-text" style=${{fontWeight:900, fontSize:'23px'}}>Super Agenda</div>
+      <div class="muted" style=${{marginTop:'3px'}}>${sub || 'Cantores, grupos, diretores de música e anciãos — tudo numa agenda só'}</div>
     </div>`;
 }
 
@@ -1063,7 +1063,7 @@ async function shareAgenda(st, ctx, me) {
     x.fillStyle = '#cbd5e1'; x.font = '28px sans-serif'; x.fillText(line2.length > 48 ? line2.slice(0, 47) + '…' : line2, 240, y + 88);
   });
   x.fillStyle = '#64748b'; x.font = '26px sans-serif'; x.textAlign = 'center';
-  x.fillText('Agenda Musical · atualizada em ' + fmtDate(today), W / 2, H - 60);
+  x.fillText('Super Agenda · atualizada em ' + fmtDate(today), W / 2, H - 60);
 
   const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
   const file = new File([blob], 'agenda-' + normLogin(title) + '.png', { type: 'image/png' });
@@ -1273,7 +1273,7 @@ function PublicPedido({ id }) {
   return html`<div class="app">
     <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
       <div style=${{display:'flex', justifyContent:'center', marginBottom:'8px'}}><${Avatar} name=${g?.name || '?'} color=${g?.color} img=${g?.logo} size=${64} /></div>
-      <div style=${{fontWeight:900, fontSize:'20px'}}>${g?.name || 'Agenda Musical'}</div>
+      <div style=${{fontWeight:900, fontSize:'20px'}}>${g?.name || 'Super Agenda'}</div>
       <div class="muted">Seu pedido de apresentação</div>
     </div>
     <div class="glass card" style=${{display:'grid', gap:'8px'}}>
@@ -1286,7 +1286,7 @@ function PublicPedido({ id }) {
       <div class="dim">Guarde este link para acompanhar o pedido e conversar com ${g?.__solo ? 'o cantor' : 'o grupo'}.</div>
       <button class="btn2" onClick=${() => copyText(location.href, 'Link copiado 🔗')}>🔗 Copiar este link</button>
     </div>
-    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Agenda Musical</div>
+    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Super Agenda</div>
     <${Toast} msg=${msg} />
   </div>`;
 }
@@ -1530,7 +1530,7 @@ function InviteSheet({ me, group, onClose }) {
   const def = saved.trim() || defInvite(myName, group);
   const [txt, setTxt] = useState(def);
   const saveDef = async () => { const t = txt.trim(); if (group) await Store.update('grupos', group.id, { inviteMsg: t }); else await Store.update('cantores', me, { inviteMsg: t }); toast('💾 Salva como sua mensagem padrão'); };
-  const send = () => { const t = txt.trim() || def; shareLink(group ? 'Convite — ' + group.name : 'Agenda Musical', t, appLink()); onClose(); };
+  const send = () => { const t = txt.trim() || def; shareLink(group ? 'Convite — ' + group.name : 'Super Agenda', t, appLink()); onClose(); };
   return html`<${Sheet} title=${group ? '📤 Convidar para ' + group.name : '📤 Convidar cantores'} onClose=${onClose}>
     <div style=${{display:'grid', gap:'10px'}}>
       <div class="lbl">Mensagem que a pessoa vai ler</div>
@@ -2196,9 +2196,9 @@ function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
     </div>
     <${MessagesCard} me=${me} />
     <${NotifyCard} />
-    ${installPrompt && html`<button class="btn" onClick=${() => installPrompt.prompt()}>📲 Instalar Agenda Musical</button>`}
+    ${installPrompt && html`<button class="btn" onClick=${() => installPrompt.prompt()}>📲 Instalar Super Agenda</button>`}
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
-    <div class="dim" style=${{textAlign:'center'}}>Agenda Musical · v${APP_VERSION}</div>
+    <div class="dim" style=${{textAlign:'center'}}>Super Agenda · v${APP_VERSION}</div>
     ${edit && g && html`<${GroupForm} me=${me} g=${g} onClose=${() => setEdit(false)} />`}
   </div>`;
 }
@@ -2419,13 +2419,13 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
       <div style=${{fontWeight:800}}>📲 Instalar no celular</div>
-      ${installPrompt ? html`<button class="btn" onClick=${() => installPrompt.prompt()}>Instalar Agenda Musical</button>`
+      ${installPrompt ? html`<button class="btn" onClick=${() => installPrompt.prompt()}>Instalar Super Agenda</button>`
         : isIOS ? html`<div class="muted">No iPhone: toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</div>`
         : html`<div class="muted">No Android: toque nos <b>3 pontinhos</b> do navegador → <b>Instalar app</b> (ou "Adicionar à tela inicial").</div>`}
     </div>`}
     ${!c.naoCanta && html`<${BecomeGroupCard} me=${me} onDone=${onBecomeGroup} />`}
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
-    <div class="dim" style=${{textAlign:'center'}}>Agenda Musical · v${APP_VERSION}</div>
+    <div class="dim" style=${{textAlign:'center'}}>Super Agenda · v${APP_VERSION}</div>
   </div>`;
 }
 
@@ -2618,7 +2618,7 @@ function PublicBooking({ gid, solo }) {
       <div class="dim">O valor exato aparece quando você informar o endereço da igreja.</div>
       ${g.cost.obs && html`<div class="dim">ℹ️ ${g.cost.obs}</div>`}
     </div>` : null}
-    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Agenda Musical</div>
+    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Super Agenda</div>
     ${day && html`<${BookingForm} g=${g} date=${day} onClose=${() => setDay(null)} onDone=${(ev) => { setDay(null); setDone(ev); }} />`}
     <${Toast} msg=${msg} />
   </div>`;
@@ -2818,7 +2818,7 @@ function App() {
       <div class="topbar">
         <div class="logo">🎶</div>
         <div style=${{flex:1, minWidth:0}}>
-          <div class="grad-text" style=${{fontWeight:900, fontSize:'17px'}}>Agenda Musical</div>
+          <div class="grad-text" style=${{fontWeight:900, fontSize:'17px'}}>Super Agenda</div>
           ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px'}}>Olá, ${title} · ⚙️ configurações</button>`}
         </div>
         <${SyncBadge} />
