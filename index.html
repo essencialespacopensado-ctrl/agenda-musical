@@ -201,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-12.03';
+const APP_VERSION = '2026-10-12.04';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -625,6 +625,52 @@ let toastFn = () => {};
 const toast = (m) => toastFn(m);
 
 // A janela é "portada" direto no <body>, senão ela ficaria presa dentro de telas animadas.
+// ---------- INSTALAR NO CELULAR ----------
+// Guarda o convite de instalação do navegador assim que ele aparece (mesmo antes de entrar).
+window.__bip = window.__bip || null;
+const installSubs = new Set();
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__bip = e; installSubs.forEach(f => f()); });
+window.addEventListener('appinstalled', () => { window.__bip = null; window.__installed = true; installSubs.forEach(f => f()); });
+const isStandalone = () => { try { return window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone; } catch(e) { return false; } };
+function useInstall() {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force(x => x + 1); installSubs.add(f); return () => installSubs.delete(f); }, []);
+  return { prompt: window.__bip, done: isStandalone() || !!window.__installed };
+}
+function InstallHelp({ onClose }) {
+  const ua = navigator.userAgent;
+  const ios = /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+  const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|; wv\)/i.test(ua);
+  const iosOther = ios && /CriOS|FxiOS|EdgiOS/i.test(ua);
+  return html`<${Sheet} title="📲 Instalar a Super Agenda" onClose=${onClose}>
+    <div style=${{display:'grid', gap:'12px'}} class="install-help">
+      ${inApp && html`<div class="warnbox">Você abriu dentro de outro app (WhatsApp/Instagram). Toque nos <b>3 pontinhos</b> ou no ícone de navegador e escolha <b>Abrir no ${ios ? 'Safari' : 'Chrome'}</b>. Depois siga os passos abaixo.</div>`}
+      ${ios ? html`
+        ${iosOther && html`<div class="warnbox">No iPhone, a instalação funciona melhor pelo <b>Safari</b>. Copie o endereço e abra no Safari.</div>`}
+        <div class="muted"><b>1.</b> Toque no botão <b>Compartilhar</b> <span style=${{fontSize:'18px'}}>⬆️</span> (quadrado com seta, embaixo ou no topo da tela).</div>
+        <div class="muted"><b>2.</b> Role a lista e toque em <b>Adicionar à Tela de Início</b> ➕.</div>
+        <div class="muted"><b>3.</b> Toque em <b>Adicionar</b>. O ícone 🎶 Super Agenda aparece junto dos seus apps.</div>`
+      : html`
+        <div class="muted"><b>1.</b> Toque nos <b>3 pontinhos ⋮</b> do navegador (canto de cima).</div>
+        <div class="muted"><b>2.</b> Toque em <b>Instalar app</b> (ou <b>Adicionar à tela inicial</b>).</div>
+        <div class="muted"><b>3.</b> Confirme em <b>Instalar</b>. O ícone 🎶 Super Agenda aparece junto dos seus apps.</div>
+        <div class="dim">No computador: clique no ícone de instalar ⊕ no fim da barra de endereço do Chrome/Edge.</div>`}
+      <button class="btn" onClick=${onClose}>Entendi</button>
+    </div>
+  </${Sheet}>`;
+}
+function InstallButton({ big }) {
+  const { prompt, done } = useInstall();
+  const [help, setHelp] = useState(false);
+  if (done) return null;
+  const go = async () => {
+    if (prompt) { try { prompt.prompt(); const r = await prompt.userChoice; if (r && r.outcome === 'accepted') { window.__bip = null; window.__installed = true; installSubs.forEach(f => f()); } } catch(e) { setHelp(true); } return; }
+    setHelp(true);
+  };
+  return html`<button class=${big ? 'btn install-btn' : 'btn2 install-btn'} style=${big ? {} : {padding:'7px 10px', whiteSpace:'nowrap', fontWeight:800}} onClick=${go}>📲 ${big ? 'Instalar Super Agenda no celular' : 'Instalar'}</button>
+    ${help && html`<${InstallHelp} onClose=${() => setHelp(false)} />`}`;
+}
+
 function Sheet({ onClose, children, title }) {
   return ReactDOM.createPortal(html`
     <div class="sheet-bg" onClick=${onClose}>
@@ -805,6 +851,7 @@ function LoginScreen({ onLogin }) {
     <div style=${{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}>
       <div class="fade-up" style=${{width:'100%', maxWidth:'430px'}}>
         <${Brand} />
+        <div style=${{display:'grid', marginBottom:'12px'}}><${InstallButton} big=${true} /></div>
         <div class="glass card" style=${{borderRadius:'22px', padding:'20px', display:'grid', gap:'14px'}}>
           <div class="seg">
             <button class=${mode==='login'?'on':''} onClick=${() => { setMode('login'); setErr(''); }}>Entrar</button>
@@ -2235,7 +2282,7 @@ function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
     </div>
     <${MessagesCard} me=${me} />
     <${NotifyCard} />
-    ${installPrompt && html`<button class="btn" onClick=${() => installPrompt.prompt()}>📲 Instalar Super Agenda</button>`}
+    <${InstallButton} big=${true} />
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
     <div class="dim" style=${{textAlign:'center'}}>Super Agenda · v${APP_VERSION}</div>
     ${edit && g && html`<${GroupForm} me=${me} g=${g} onClose=${() => setEdit(false)} />`}
@@ -2471,9 +2518,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
       <div style=${{fontWeight:800}}>📲 Instalar no celular</div>
-      ${installPrompt ? html`<button class="btn" onClick=${() => installPrompt.prompt()}>Instalar Super Agenda</button>`
-        : isIOS ? html`<div class="muted">No iPhone: toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</div>`
-        : html`<div class="muted">No Android: toque nos <b>3 pontinhos</b> do navegador → <b>Instalar app</b> (ou "Adicionar à tela inicial").</div>`}
+      <${InstallButton} big=${true} />
     </div>`}
     ${!c.naoCanta && html`<${BecomeGroupCard} me=${me} onDone=${onBecomeGroup} />`}
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
@@ -2870,10 +2915,11 @@ function App() {
       <div class="topbar">
         <div class="logo">🎶</div>
         <div style=${{flex:1, minWidth:0}}>
-          <div class="grad-text" style=${{fontWeight:900, fontSize:'17px'}}>Super Agenda</div>
-          ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px'}}>Olá, ${title} · ⚙️ configurações</button>`}
+          <div class="grad-text" style=${{fontWeight:900, fontSize:'17px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>Super Agenda</div>
+          ${session.dev ? html`<div class="dim">Olá, ${title}</div>` : html`<button onClick=${() => setTab('perfil')} style=${{border:'none', background:'none', padding:0, color:'var(--text-dim, #94a3b8)', fontSize:'12.5px', maxWidth:'100%', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block', textAlign:'left'}}>Olá, ${title} · ⚙️ configurações</button>`}
         </div>
         <${SyncBadge} />
+        <${InstallButton} />
         ${session.dev && html`<button class="btn2" style=${{padding:'7px 10px'}} onClick=${logout}>Sair</button>`}
       </div>
 
