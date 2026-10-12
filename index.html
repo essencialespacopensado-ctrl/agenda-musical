@@ -105,6 +105,7 @@
   .day.out { opacity:.22; }
   .day.past { opacity:.5; filter:saturate(.6); }
   .day.today::after { content:'HOJE'; position:absolute; bottom:3px; left:50%; transform:translateX(-50%); font-size:8px; font-weight:900; letter-spacing:.5px; color:#22d3ee; text-shadow:0 0 6px rgba(34,211,238,.9); }
+  .day.today.st-ens::after { display:none; }
   .day.today { border-style:dashed; border-color:rgba(34,211,238,.7); }
   .day.st-free { background:linear-gradient(160deg,rgba(16,185,129,.28),rgba(6,95,70,.35)); border-color:rgba(52,211,153,.55); color:#d1fae5; }
   .day.st-mine { background:linear-gradient(160deg,#3b82f6,#6366f1); border-color:#93c5fd; color:#fff; box-shadow:0 0 14px -2px rgba(99,102,241,.9); }
@@ -131,6 +132,30 @@
   .toast { position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 92px); transform:translateX(-50%); z-index:60; padding:11px 16px; border-radius:12px; background:#111827; border:1px solid var(--border-soft); font-size:14px; font-weight:700; box-shadow:0 10px 30px -10px #000; animation:fadeUp .25s ease both; max-width:90vw; text-align:center; }
   table.t { width:100%; border-collapse:collapse; font-size:13px; }
   table.t td { padding:7px 4px; border-bottom:1px solid var(--border-soft); vertical-align:middle; }
+
+  /* ===== ⚡ VISUAL ELÉTRICO ===== */
+  @keyframes neonFlicker { 0%,19%,21%,23%,55%,57%,100% { opacity:1; filter:drop-shadow(0 0 6px rgba(236,72,153,.9)) drop-shadow(0 0 14px rgba(34,211,238,.6)); } 20%,22%,56% { opacity:.45; filter:none; } }
+  .grad-text { animation:neonFlicker 4.5s infinite; }
+  @keyframes borderRun { 0% { background-position:0 0, 0% 50%; } 100% { background-position:0 0, 300% 50%; } }
+  .zap-border { border:2px solid transparent !important; background-clip:padding-box, border-box !important; background-origin:padding-box, border-box !important; background-size:100% 100%, 300% 100% !important; animation:borderRun 2.6s linear infinite, zapGlow 2.2s ease-in-out infinite; }
+  @keyframes zapGlow { 0%,100% { box-shadow:0 0 14px -4px rgba(236,72,153,.8), 0 0 30px -12px rgba(34,211,238,.7); } 50% { box-shadow:0 0 24px -2px rgba(34,211,238,.95), 0 0 46px -10px rgba(168,85,247,.9); } }
+  .calbox.zap-border, .banner-zap { background-image:linear-gradient(160deg,#111a33,#0b1124), linear-gradient(90deg,#ec4899,#22d3ee,#a855f7,#facc15,#ec4899) !important; }
+  .banner-zap { background-image:linear-gradient(135deg,#2a1036,#1b1640 55%,#0b2a3a), linear-gradient(90deg,#ec4899,#22d3ee,#a855f7,#facc15,#ec4899) !important; }
+  .btn { position:relative; overflow:hidden; box-shadow:0 0 18px -4px rgba(236,72,153,.85), 0 0 28px -10px rgba(34,211,238,.8); animation:btnPulse 2.4s ease-in-out infinite; }
+  @keyframes btnPulse { 0%,100% { box-shadow:0 0 16px -4px rgba(236,72,153,.8), 0 0 26px -10px rgba(34,211,238,.7); } 50% { box-shadow:0 0 26px -2px rgba(236,72,153,1), 0 0 40px -8px rgba(34,211,238,.95); } }
+  .btn::after { content:''; position:absolute; top:-50%; bottom:-50%; width:40%; left:-60%; background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent); transform:skewX(-20deg); animation:shine 3.2s ease-in-out infinite; pointer-events:none; }
+  @keyframes shine { 0%,60% { left:-60%; } 100% { left:130%; } }
+  @keyframes zapShake { 0% { transform:translate(0,0) scale(.97); } 20% { transform:translate(-2px,1px) scale(.97); } 40% { transform:translate(2px,-1px) scale(.98); } 60% { transform:translate(-1px,-1px); filter:brightness(1.6); } 100% { transform:none; } }
+  button.zapping { animation:zapShake .28s linear !important; }
+  .nav-in button.on { box-shadow:0 0 16px -2px rgba(236,72,153,.9), inset 0 0 12px -4px rgba(34,211,238,.9); animation:zapGlow 2.2s ease-in-out infinite; }
+  .nav-in { box-shadow:0 0 22px -8px rgba(34,211,238,.7); border:1px solid rgba(34,211,238,.35) !important; }
+  .day.st-ens, .day.st-extra, .day.st-mine, .day.st-has { animation:dayZap 2.8s ease-in-out infinite; }
+  @keyframes dayZap { 0%,100% { filter:brightness(1); } 48% { filter:brightness(1); } 50% { filter:brightness(1.7) saturate(1.4); } 52% { filter:brightness(1); } 54% { filter:brightness(1.4); } 56% { filter:brightness(1); } }
+  @keyframes flash { 0%,96.5%,100% { opacity:0; } 97% { opacity:.16; } 97.6% { opacity:0; } 98.2% { opacity:.1; } 98.8% { opacity:0; } }
+  #zapFlash { position:fixed; top:0; left:0; right:0; bottom:0; pointer-events:none; z-index:-1; background:radial-gradient(circle at 70% 10%, rgba(165,243,252,.9), rgba(168,85,247,.3) 40%, transparent 70%); animation:flash 9s infinite; }
+  #zapBg { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:-1; }
+  #zapFx { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:200; }
+  @media (prefers-reduced-motion: reduce) { .grad-text, .zap-border, .btn, .btn::after, .nav-in button.on, .day, #zapFlash { animation:none !important; } #zapBg, #zapFx { display:none; } }
 </style>
 </head>
 <body>
@@ -176,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.20';
+const APP_VERSION = '2026-10-11.22';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -422,7 +447,19 @@ function participantsOf(st, ev) {
 const isEnsaio = (ev) => ev && ev.kind === 'ensaio';
 // Tipos de participação (botões no convite das igrejas e no agendamento).
 const PARTS = ['🎤 Louvor ao vivo','🎶 Momento de louvor','💿 Playback','🎵 Mensagem musical','👧 História das crianças','⛪ Culto completo'];
-const FUNCOES = ['Soprano','Contralto','Tenor','Barítono','Baixo','1ª voz','2ª voz','3ª voz','Líder','Teclado','Violão','Bateria','Baixo (instr.)','Som'];
+const FUNCOES = ['Soprano','Contralto','Tenor','Barítono','Baixo','1ª voz','2ª voz','3ª voz','Líder','Teclado','Violão','Bateria','Baixo (instr.)','Som','Mídia'];
+// Confirmação em grupo: todos os integrantes precisam confirmar, menos quem tem a função "Mídia".
+const isMidia = (g, l) => ((g?.funcoes || {})[l] || []).some(f => /^m[íi]dia$/i.test(String(f).trim()));
+function confirmNeeded(st, ev) {
+  if (ev.ownerType !== 'grupo') return [ev.ownerId];
+  const g = st.grupos[ev.ownerId];
+  return participantsOf(st, ev).filter(l => !isMidia(g, l));
+}
+function confirmInfo(st, ev) {
+  const need = confirmNeeded(st, ev); const c = ev.confirms || {};
+  const done = need.filter(l => c[l]); const missing = need.filter(l => !c[l]);
+  return { need, done, missing, c };
+}
 function PartChips({ value, onChange }) {
   const v = value || [];
   return html`<div class="chips" style=${{flexWrap:'wrap'}}>${PARTS.map(p => html`<button type="button" key=${p} class=${'chip ' + (v.includes(p) ? 'on' : '')} style=${v.includes(p) ? {background:'linear-gradient(135deg,#ec4899,#8b5cf6)', borderColor:'#f0abfc', color:'#fff', boxShadow:'0 0 12px -3px rgba(236,72,153,.9)'} : null} onClick=${() => onChange(v.includes(p) ? v.filter(x => x !== p) : [...v, p])}>${v.includes(p) ? '✅ ' : ''}${p}</button>`)}</div>`;
@@ -810,7 +847,7 @@ function Calendar({ month, setMonth, renderDay, onPick }) {
   const shown = lastRowUsed ? days : days.slice(0, 35);
   const shift = (n) => setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1));
   return html`
-    <div class="calbox">
+    <div class="calbox zap-border">
       <div class="cal-head">
         <button onClick=${() => shift(-1)}>‹</button>
         <button class="mtitle" onClick=${() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} style=${{width:'auto', border:'none', background:'none', fontWeight:900, fontSize:'17px', padding:'0 6px'}}>${MESES[month.getMonth()]} ${month.getFullYear()}</button>
@@ -1030,7 +1067,7 @@ function AgendaBanner({ me, onPick, gid }) {
   const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && !isEnsaio(e) && e.date.startsWith(ym)).length;
   const first = gid ? (st.grupos[gid]?.name || callName(st, me)) : callName(st, me);
   const label = (e) => isEnsaio(e) ? evTitle(st, e) : e.ownerType === 'grupo' ? ownerName(st, e) : '🎙️ Solo';
-  return html`<div class="card" style=${{borderRadius:'18px', padding:'16px', background:'linear-gradient(135deg, rgba(236,72,153,.28), rgba(139,92,246,.28) 55%, rgba(6,182,212,.2))', border:'1px solid rgba(255,255,255,.12)', display:'grid', gap:'10px'}}>
+  return html`<div class="card zap-border banner-zap" style=${{borderRadius:'18px', padding:'16px', display:'grid', gap:'10px'}}>
     <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
       <div>
         <div style=${{fontWeight:900, fontSize:'18px'}}>Olá, ${first}! 👋</div>
@@ -1047,9 +1084,9 @@ function AgendaBanner({ me, onPick, gid }) {
         <div style=${{minWidth:'44px', textAlign:'center'}}><div style=${{fontSize:'11px', fontWeight:900, color:'#fcd34d'}}>${DOW3[d.getDay()].toUpperCase()}</div><div style=${{fontWeight:900, fontSize:'17px', lineHeight:1.1}}>${d.getDate()}/${pad(d.getMonth()+1)}</div></div>
         <div style=${{flex:1, minWidth:0}}>
           <div style=${{fontWeight:800, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${e.source === 'igreja' ? '⛪ ' + (e.church?.name || 'Igreja') : label(e)}${e.source === 'igreja' && e.ownerType === 'grupo' && !gid ? ' · ' + ownerName(st, e) : ''}</div>
-          <div class="dim" style=${{fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${(e.parts||[]).length ? ' · ' + e.parts.map(p => p.replace(/^\S+\s/, '')).join(', ') : ''}${e.church?.cost ? ' · ' + brl(e.church.cost) : ''}</div>
+          <div class="dim" style=${{fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${(e.parts||[]).length ? ' · ' + e.parts.map(p => p.replace(/^\S+\s/, '')).join(', ') : ''}${e.church?.cost ? ' · ' + brl(e.church.cost) : ''}${e.ownerType === 'grupo' ? ' · ' + confirmInfo(st, e).done.length + '/' + confirmInfo(st, e).need.length + ' confirmaram' : ''}</div>
         </div>
-        <span style=${{fontSize:'12px', fontWeight:900, color:'#111', background:'#fcd34d', borderRadius:'999px', padding:'4px 8px', whiteSpace:'nowrap'}}>Confirmar ›</span>
+        ${(() => { const ci = confirmInfo(st, e); const mine = e.ownerType !== 'grupo' || (ci.need.includes(me) && !ci.c[me]); return html`<span style=${{fontSize:'12px', fontWeight:900, color: mine ? '#111' : '#fcd34d', background: mine ? '#fcd34d' : 'transparent', border:'1px solid #fcd34d', borderRadius:'999px', padding:'4px 8px', whiteSpace:'nowrap'}}>${mine ? 'Confirmar ›' : 'Aguardando ' + ci.missing.length}</span>`; })()}
       </button>`; })}
     </div>`}
     <div style=${{display:'grid', gap:'6px'}}>${!weekEvs.length && html`<div class="okbox" style=${{padding:'8px 10px'}}>🎉 Semana livre — nenhum compromisso de domingo a sábado.</div>`}${week.map((d, i) => { const evs = weekEvs.filter(e => e.date === d); if (!evs.length) return null; const isT = d === today; const past = d < today; return html`<button key=${d} onClick=${() => onPick(d)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border: isT ? '1px solid #22d3ee' : '1px solid rgba(255,255,255,.06)', background: isT ? 'linear-gradient(135deg,rgba(34,211,238,.22),rgba(139,92,246,.22))' : evs.length ? 'rgba(2,6,23,.45)' : 'rgba(2,6,23,.22)', color:'var(--text-hi)', opacity: past ? .55 : 1}}>
@@ -1186,6 +1223,25 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
     toast('Compromisso excluído');
   };
   const confirmEv = async (ev) => {
+    if (ev.ownerType === 'grupo') {
+      const { need, c } = confirmInfo(st, ev);
+      if (!need.includes(me)) { toast(isMidia(st.grupos[ev.ownerId], me) ? 'Quem é da mídia não precisa confirmar 👍' : 'Só os integrantes confirmam a presença.'); return; }
+      const confirms = { ...c, [me]: Date.now() };
+      const missing = need.filter(l => !confirms[l]);
+      if (missing.length) {
+        await Store.update('eventos', ev.id, { confirms });
+        Store.log('confirmacao', cantorName(st, me), 'presença em ' + ownerName(st, ev) + ' ' + fmtDate(ev.date));
+        toast('Presença confirmada ✅ Falta: ' + missing.map(l => callName(st, l)).join(', '));
+        return;
+      }
+      const g2 = st.grupos[ev.ownerId];
+      const cf = conflictsFor(st, (g2?.members || []), ev.date, ev.period, ev.id);
+      if (isChurchPending(ev) && cf.length) { alert('Não dá pra confirmar: ' + [...new Set(cf.map(x => x.login === me ? 'você' : cantorName(st, x.login)))].join(', ') + ' já tem compromisso nesse dia e período. Recuse o pedido ou combine outra data com a igreja.'); return; }
+      await Store.update('eventos', ev.id, { confirms, status:'confirmado', confirmedBy: me, confirmedAt: Date.now() });
+      Store.log('confirmacao', cantorName(st, me), ownerName(st, ev) + ' ' + fmtDate(ev.date) + ' (todos confirmaram)');
+      toast('🔵 Todos confirmaram — compromisso confirmado!');
+      return;
+    }
     if (isChurchPending(ev)) {
       const g2 = st.grupos[ev.ownerId];
       const c = conflictsFor(st, (g2?.members || []), ev.date, ev.period, ev.id);
@@ -1219,12 +1275,17 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
           ${ev.notes && html`<div class="muted">📝 ${ev.notes}</div>`}
           ${ev.source === 'igreja' && ev.church && html`<${ChurchInfo} ev=${ev} />`}
           ${ev.ownerType === 'grupo' && html`<div class="dim" style=${{marginTop:'4px'}}>👥 ${parts.map(l => cantorName(st, l)).join(', ')}${(ev.excluded||[]).length ? ' · substituído(s): ' + ev.excluded.map(l => cantorName(st, l)).join(', ') : ''}</div>`}
+          ${ev.status === 'pendente' && ev.ownerType === 'grupo' && (() => { const ci = confirmInfo(st, ev); return html`<div style=${{marginTop:'6px', padding:'8px 10px', borderRadius:'10px', background:'rgba(245,158,11,.12)', border:'1px solid rgba(252,211,77,.4)'}}>
+            <div style=${{fontWeight:800, color:'#fcd34d'}}>🟡 ${ci.done.length} de ${ci.need.length} confirmaram</div>
+            <div class="chips" style=${{flexWrap:'wrap', marginTop:'4px'}}>${ci.need.map(l => html`<span key=${l} class="chip" style=${{cursor:'default', background: ci.c[l] ? 'rgba(16,185,129,.25)' : 'rgba(148,163,184,.12)'}}>${ci.c[l] ? '✅' : '⏳'} ${callName(st, l)}</span>`)}</div>
+            ${participantsOf(st, ev).some(l => isMidia(st.grupos[ev.ownerId], l)) && html`<div class="dim" style=${{marginTop:'4px'}}>🎛️ Mídia não precisa confirmar.</div>`}
+          </div>`; })()}
           <div class="row" style=${{marginTop:'6px', flexWrap:'wrap', gap:'6px'}}>
             ${ev.status === 'pendente' ? html`<span class="sync" style=${{background:'rgba(245,158,11,.15)', color:'#fcd34d'}}>🟡 A confirmar</span>` : isEnsaio(ev) ? html`<span class="sync" style=${{background:'rgba(16,185,129,.15)', color:'#6ee7b7'}}>🎼 Ensaio</span>` : ev.kind !== 'bloqueio' ? html`<span class="sync" style=${{background:'rgba(59,130,246,.18)', color:'#93c5fd'}}>🔵 Confirmado</span>` : null}
             <span class="dim">${ev.source === 'igreja' ? '⛪ pedido feito pela igreja' : 'marcado por ' + cantorName(st, ev.createdBy)}</span>
           </div>
           ${canTouch(ev) && html`<div class="row" style=${{marginTop:'10px', gap:'6px'}}>
-            ${ev.status === 'pendente' && html`<button class="btn2 btn-green" style=${{flex:1}} onClick=${() => confirmEv(ev)}>✅ Confirmar</button>`}
+            ${ev.status === 'pendente' && (ev.ownerType !== 'grupo' || (confirmInfo(st, ev).need.includes(me) && !confirmInfo(st, ev).c[me])) && html`<button class="btn2 btn-green" style=${{flex:1}} onClick=${() => confirmEv(ev)}>${ev.ownerType === 'grupo' ? '✅ Confirmar minha presença' : '✅ Confirmar'}</button>`}
             ${isChurchPending(ev) ? html`<button class="btn2 btn-red" style=${{flex:1}} onClick=${() => refuseEv(ev)}>✖️ Recusar</button>` : html`
               <button class="btn2" style=${{flex:1}} onClick=${() => onEdit(ev)}>✏️ Editar</button>
               <button class="btn2 btn-red" style=${{flex:1}} onClick=${() => del(ev)}>🗑️ Excluir</button>`}
@@ -1236,10 +1297,10 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
         <div style=${{fontWeight:800, marginBottom:'4px'}}>🔴 Integrante ocupado nesse dia</div>
         ${busy.map((b,i) => html`<div key=${i}>• <b>${cantorName(st, b.login)}</b> — ${privateDesc(st, b.ev, me)}</div>`)}
       </div>`}
-      ${!readOnly && html`<div class="row" style=${{marginTop:'4px'}}>
-        <button class="btn" onClick=${() => onNew({})}>➕ Agendar neste dia</button>
-        <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => onNew({ ensaio:true })}>🎼 Ensaio</button>
-        ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => onNew({ bloqueio:true })}>🚫 Bloquear</button>`}
+      ${!readOnly && html`<div class="actions-row" style=${{marginTop:'4px'}}>
+        <button class="btn" style=${{flex:'1 1 100%'}} onClick=${() => onNew({})}>➕ Agendar neste dia</button>
+        <button class="btn2" style=${{flex:'1 1 120px'}} onClick=${() => onNew({ ensaio:true })}>🎼 Ensaio</button>
+        ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{flex:'1 1 120px'}} onClick=${() => onNew({ bloqueio:true })}>🚫 Bloquear</button>`}
       </div>`}
     </div>
   </${Sheet}>`;
@@ -2590,6 +2651,44 @@ function App() {
 // Link público das igrejas (?agendar=ID) abre só a página de agendamento, sem login.
 const QS = new URLSearchParams(location.search);
 const AGENDAR_ID = QS.get('agendar'), SOLO_ID = QS.get('solo');
+// ⚡ Efeitos elétricos: faíscas no fundo, relâmpagos e explosão de faíscas no toque.
+(function () {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const mk = (id) => { const c = document.createElement('canvas'); c.id = id; document.body.appendChild(c); return c; };
+  const fl = document.createElement('div'); fl.id = 'zapFlash'; document.body.appendChild(fl);
+  const bg = mk('zapBg'), fx = mk('zapFx');
+  const bx = bg.getContext('2d'), fxx = fx.getContext('2d');
+  let W = 0, H = 0; const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const size = () => { W = innerWidth; H = innerHeight; [bg, fx].forEach(c => { c.width = W * dpr; c.height = H * dpr; c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0); }); };
+  size(); addEventListener('resize', size);
+  const cols = ['#ec4899', '#22d3ee', '#a855f7', '#facc15'];
+  const N = W < 500 ? 26 : 45;
+  const motes = Array.from({ length: N }, () => ({ x: Math.random() * W, y: Math.random() * H, v: .2 + Math.random() * .6, r: .6 + Math.random() * 1.6, c: cols[(Math.random() * 4) | 0], t: Math.random() * 6 }));
+  let bolts = []; let sparks = [];
+  const bolt = (x1, y1, x2, y2, depth) => { const pts = [[x1, y1]]; const n = 9; for (let i = 1; i < n; i++) { const k = i / n; pts.push([x1 + (x2 - x1) * k + (Math.random() - .5) * 46, y1 + (y2 - y1) * k + (Math.random() - .5) * 22]); } pts.push([x2, y2]); return { pts, life: 1, c: cols[(Math.random() * 3) | 0], w: depth || 2 }; };
+  setInterval(() => { if (document.hidden) return; const x = Math.random() * W; bolts.push(bolt(x, -10, x + (Math.random() - .5) * 200, H * (.25 + Math.random() * .35))); }, 6500);
+  const burst = (x, y) => { for (let i = 0; i < 22; i++) { const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 5; sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, life: 1, c: cols[(Math.random() * 4) | 0] }); } bolts.push(bolt(x, y, x + (Math.random() - .5) * 120, y - 40 - Math.random() * 80, 1.4)); };
+  addEventListener('pointerdown', (e) => {
+    burst(e.clientX, e.clientY);
+    const b = e.target.closest && e.target.closest('button, .chip, .item, a.btn');
+    if (b) { b.classList.remove('zapping'); void b.offsetWidth; b.classList.add('zapping'); setTimeout(() => b.classList.remove('zapping'), 300); }
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (er) {}
+  }, { passive: true });
+  const loop = () => {
+    if (!document.hidden) {
+      bx.clearRect(0, 0, W, H);
+      motes.forEach(m => { m.y -= m.v; m.t += .08; if (m.y < -5) { m.y = H + 5; m.x = Math.random() * W; } const a = .35 + .35 * Math.sin(m.t * 3) + (Math.random() < .01 ? .5 : 0); bx.globalAlpha = Math.min(1, a); bx.fillStyle = m.c; bx.shadowColor = m.c; bx.shadowBlur = 8; bx.beginPath(); bx.arc(m.x + Math.sin(m.t) * 1.5, m.y, m.r, 0, 7); bx.fill(); });
+      bx.shadowBlur = 0; bx.globalAlpha = 1;
+      fxx.clearRect(0, 0, W, H);
+      bolts = bolts.filter(b => b.life > 0); bolts.forEach(b => { fxx.globalAlpha = b.life; fxx.strokeStyle = '#fff'; fxx.lineWidth = b.w; fxx.shadowColor = b.c; fxx.shadowBlur = 18; fxx.beginPath(); b.pts.forEach((p, i) => i ? fxx.lineTo(p[0], p[1]) : fxx.moveTo(p[0], p[1])); fxx.stroke(); b.life -= .06; });
+      sparks = sparks.filter(s => s.life > 0); sparks.forEach(s => { s.x += s.vx; s.y += s.vy; s.vy += .15; s.vx *= .97; fxx.globalAlpha = s.life; fxx.strokeStyle = s.c; fxx.shadowColor = s.c; fxx.shadowBlur = 10; fxx.lineWidth = 2; fxx.beginPath(); fxx.moveTo(s.x, s.y); fxx.lineTo(s.x - s.vx * 2.2, s.y - s.vy * 2.2); fxx.stroke(); s.life -= .035; });
+      fxx.globalAlpha = 1; fxx.shadowBlur = 0;
+    }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+})();
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />`
   : SOLO_ID ? html`<${PublicBooking} gid=${SOLO_ID} solo=${true} />`
