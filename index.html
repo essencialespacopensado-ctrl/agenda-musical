@@ -176,7 +176,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.19';
+const APP_VERSION = '2026-10-11.20';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -1792,7 +1792,7 @@ function GroupPanel({ me, g, onClose, onEdit, onAgenda }) {
           <div style=${{fontWeight:700}}>${cantorName(st, m)}${m === me ? ' (você)' : ''}</div>
           <div class="dim">${g.leader === m ? '⭐ Responsável' : 'Integrante'}${((g.funcoes||{})[m]||[]).length ? ' · ' + g.funcoes[m].join(', ') : ''}</div>
         </div>
-        ${isLeader && html`<button class="btn2" title="Funções" style=${{padding:'8px 10px'}} onClick=${() => setFn(m)}>🎚️</button>`}
+        ${isLeader && html`<button class="btn2" title="Funções" style=${{padding:'8px 10px', whiteSpace:'nowrap'}} onClick=${() => setFn(m)}>🎚️ Funções</button>`}
         ${wa && m !== me && html`<a href=${wa} target="_blank" class="btn2" style=${{textDecoration:'none', padding:'8px 10px'}}>💬</a>`}
         ${(isLeader || m === me) && html`<button class="btn2 btn-red" style=${{padding:'8px 10px'}} onClick=${() => removeM(m)}>${m === me ? 'Sair' : '✕'}</button>`}
       </div>`; })}</div>
@@ -1812,14 +1812,41 @@ function GroupPanel({ me, g, onClose, onEdit, onAgenda }) {
     </div>
     ${costs && html`<${CostForm} g=${g} me=${me} onClose=${() => setCosts(false)} />`}
     ${mkAcct && html`<${GroupAcctForm} g=${g} me=${me} onClose=${() => setMkAcct(false)} />`}
-    ${fn && html`<${Sheet} title=${'🎚️ Funções de ' + cantorName(st, fn)} onClose=${() => setFn(null)}>
-      <div style=${{display:'grid', gap:'10px'}}>
-        <div class="muted">Toque pra marcar a função (pode mais de uma). Salva na hora.</div>
-        <div class="chips" style=${{flexWrap:'wrap'}}>${FUNCOES.map(f => { const cur = (g.funcoes||{})[fn] || []; const on = cur.includes(f); return html`<button key=${f} class=${'chip ' + (on ? 'on' : '')} style=${on ? {background:'linear-gradient(135deg,#10b981,#06b6d4)', color:'#fff'} : null} onClick=${() => Store.update('grupos', g.id, { funcoes: { ...(g.funcoes||{}), [fn]: on ? cur.filter(x => x !== f) : [...cur, f] } })}>${on ? '✅ ' : ''}${f}</button>`; })}</div>
-        <button class="btn" onClick=${() => setFn(null)}>Pronto</button>
-      </div>
-    </${Sheet}>`}
+    ${fn && html`<${FuncoesSheet} g=${g} login=${fn} onClose=${() => setFn(null)} />`}
   </div>`;
+}
+
+// Funções de um integrante: marcar/desmarcar, criar funções novas e apagar as que o grupo não usa.
+function FuncoesSheet({ g, login, onClose }) {
+  const st = useStore();
+  const [novo, setNovo] = useState(''); const [editLista, setEditLista] = useState(false);
+  const lista = g.funcoesLista || FUNCOES;
+  const cur = (g.funcoes || {})[login] || [];
+  const all = [...lista, ...cur.filter(f => !lista.includes(f))];
+  const toggle = (f) => Store.update('grupos', g.id, { funcoes: { ...(g.funcoes || {}), [login]: cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f] } });
+  const add = () => { const f = novo.trim(); if (!f) return; const l = lista.includes(f) ? lista : [...lista, f]; Store.update('grupos', g.id, { funcoesLista: l, funcoes: { ...(g.funcoes || {}), [login]: cur.includes(f) ? cur : [...cur, f] } }); setNovo(''); toast('Função “' + f + '” criada ✅'); };
+  const remove = (f) => {
+    if (!confirm('Apagar a função “' + f + '” do grupo? Ela sai de todos os integrantes.')) return;
+    const fs = {}; Object.entries(g.funcoes || {}).forEach(([k, v]) => { fs[k] = (v || []).filter(x => x !== f); });
+    Store.update('grupos', g.id, { funcoesLista: lista.filter(x => x !== f), funcoes: fs });
+  };
+  return html`<${Sheet} title=${'🎚️ Funções de ' + cantorName(st, login)} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      <div class="muted">${editLista ? 'Toque no ✕ pra apagar uma função da lista do grupo.' : 'Toque pra marcar ou desmarcar (pode mais de uma). Salva na hora.'}</div>
+      <div class="chips" style=${{flexWrap:'wrap'}}>${all.map(f => { const on = cur.includes(f); return editLista
+        ? html`<button key=${f} class="chip" style=${{borderColor:'rgba(239,68,68,.6)'}} onClick=${() => remove(f)}>✕ ${f}</button>`
+        : html`<button key=${f} class=${'chip ' + (on ? 'on' : '')} style=${on ? {background:'linear-gradient(135deg,#10b981,#06b6d4)', color:'#fff'} : null} onClick=${() => toggle(f)}>${on ? '✅ ' : ''}${f}</button>`; })}</div>
+      <div class="row" style=${{gap:'6px'}}>
+        <input class="inp" placeholder="Nova função (ex.: Regente, Abertura)" value=${novo} onInput=${e => setNovo(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') add(); }} />
+        <button class="btn2 btn-green" style=${{whiteSpace:'nowrap'}} onClick=${add}>➕ Criar</button>
+      </div>
+      <div class="row" style=${{gap:'6px'}}>
+        <button class="btn2" style=${{flex:1}} onClick=${() => setEditLista(!editLista)}>${editLista ? '✔️ Terminar edição da lista' : '✏️ Editar lista de funções'}</button>
+        ${g.funcoesLista && html`<button class="btn2" onClick=${() => { if (confirm('Voltar para a lista de funções original?')) Store.update('grupos', g.id, { funcoesLista: null }); }}>↺ Original</button>`}
+      </div>
+      <button class="btn" onClick=${onClose}>Pronto</button>
+    </div>
+  </${Sheet}>`;
 }
 
 // Cria o login de um grupo que já existia (feito antes da conta de grupo existir).
