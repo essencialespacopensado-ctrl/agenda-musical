@@ -201,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.22';
+const APP_VERSION = '2026-10-12.01';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -401,6 +401,14 @@ const Store = (() => {
     },
     // Observação nova num compromisso: usa arrayUnion, então duas pessoas escrevendo ao mesmo
     // tempo não apagam a observação uma da outra.
+    // Mensagem numa lista do compromisso (ex.: chatIgreja = conversa com a igreja).
+    async addMsg(evId, field, obj) {
+      const cur = state.eventos[evId]; if (!cur) return false;
+      localSet('eventos', evId, { ...cur, [field]: [...(cur[field] || []), obj] });
+      if (!isCloud()) return true;
+      const { doc, setDoc, arrayUnion } = window.__fb.h;
+      try { await setDoc(doc(window.__fb.db, COL.eventos, evId), { [field]: arrayUnion(obj) }, { merge:true }); return true; } catch(e) { console.error(e); status='erro'; emit(); return false; }
+    },
     async addObs(evId, obs) {
       const cur = state.eventos[evId]; if (!cur) return false;
       localSet('eventos', evId, { ...cur, obs: [...(cur.obs || []), obs] });
@@ -427,7 +435,15 @@ function useStatus() {
 }
 
 // ---------- regras da agenda ----------
-const activeCantores = (st) => Object.values(st.cantores).filter(c => !c.removed && !c.isGroup);
+const activeCantores = (st) => Object.values(st.cantores).filter(c => !c.removed && !c.isGroup && !c.isContact && !c.naoCanta);
+const hasRole = (st, login, r) => ((st.cantores[login]?.roles) || []).includes(r);
+// Cidade / Associação / Distrito / Igreja
+const LOC_KEYS = [['city','Cidade','Ex: Timbó - SC'],['associacao','Associação','Ex: Associação Catarinense'],['distrito','Distrito','Ex: Distrito de Timbó'],['igreja','Igreja','Ex: IASD Central de Timbó']];
+const locLine = (o) => LOC_KEYS.map(([k]) => (o && o[k]) || '').filter(Boolean).join(' · ');
+function LocFields({ value, onChange }) {
+  const v = value || {};
+  return html`<div style=${{display:'grid', gap:'8px'}}>${LOC_KEYS.map(([k, lb, ph]) => html`<div key=${k}><div class="lbl" style=${{marginBottom:'4px'}}>${lb}</div><input class="inp" placeholder=${ph} value=${v[k] || ''} onInput=${e => onChange({ ...v, [k]: e.target.value })} /></div>`)}</div>`;
+}
 // Conta do grupo: login próprio do grupo (guardado junto das contas, com isGroup + groupId).
 const isGroupAcct = (st, login) => !!(login && st.cantores[login]?.isGroup);
 const canManage = (st, g, me) => !!g && !!me && (g.account === me || (g.members||[]).includes(me));
@@ -570,6 +586,7 @@ function buildAvisos(st, login) {
       out.push({ id: e.id + '|solo', kind:'pedido', g: { name:'Solo', color: SOLO_COLOR }, ev:e, at:e.createdAt||0 });
     }
     if (parts.includes(login) || (e.ownerType === 'grupo' && st.grupos[e.ownerId]?.account === login)) {
+      (e.chatIgreja || []).forEach((o, i) => { if (o.by === '__igreja__' && i > 0) out.push({ id: e.id + '|ci|' + i + '|' + o.at, kind:'igrejaMsg', ev:e, obs:o, g: e.ownerType === 'grupo' ? st.grupos[e.ownerId] : null, at:o.at || 0 }); });
       (e.obs || []).forEach((o, i) => {
         if (o.by !== login) out.push({ id: e.id + '|obs|' + i + '|' + o.at, kind:'obs', ev:e, obs:o, g: e.ownerType === 'grupo' ? st.grupos[e.ownerId] : null, at:o.at || 0 });
       });
@@ -706,6 +723,7 @@ function LoginScreen({ onLogin }) {
   const [f, setF] = useState({ name:'', apelido:'', phone:'', login:'', pass:'', q:'', a:'' });
   const [acct, setAcct] = useState(() => { try { const v = localStorage.getItem('am_reg_group'); if (v) { localStorage.removeItem('am_reg_group'); return 'grupo'; } } catch(e) {} return 'cantor'; });
   const [gTipo, setGTipo] = useState('Quarteto');
+  const [loc, setLoc] = useState({});
   useEffect(() => { if (acct === 'grupo') setMode('register'); }, []);
   const up = (k) => (e) => setF(o => ({ ...o, [k]: e.target.value }));
   const cantores = useMemo(() => activeCantores(st).sort((a,b) => a.name.localeCompare(b.name,'pt-BR')), [st.cantores]);
@@ -719,7 +737,7 @@ function LoginScreen({ onLogin }) {
       setErr('Usuário ou senha incorretos.'); return;
     }
     // Aceita o usuário ou o nome completo digitado.
-    const c = st.cantores[u] || Object.values(st.cantores).find(x => !x.removed && normLogin(x.name) === u);
+    const c = (st.cantores[u] && !st.cantores[u].isContact ? st.cantores[u] : null) || Object.values(st.cantores).find(x => !x.removed && !x.isContact && normLogin(x.name) === u);
     if (!c || c.removed || c.passHash !== simpleHash(pass)) { setErr('Usuário ou senha incorretos.'); return; }
     if (c.paused) { setErr('Seu acesso está pausado. Fale com o Paulo.'); return; }
     Store.log('login', c.name);
@@ -730,6 +748,7 @@ function LoginScreen({ onLogin }) {
     e.preventDefault(); setErr('');
     const login = normLogin(f.login || f.name);
     if (!f.name.trim()) return setErr(acct === 'grupo' ? 'Digite o nome do grupo.' : 'Digite seu nome.');
+    if ((acct === 'diretor' || acct === 'anciao') && !(loc.igreja || '').trim() && !(loc.city || '').trim()) return setErr('Informe pelo menos a cidade ou a igreja.');
     if (!login || login.length < 3) return setErr('Escolha um usuário com pelo menos 3 letras.');
     if (login === DEV.login) return setErr('Esse usuário é reservado. Escolha outro.');
     if (f.pass.length < 4) return setErr('A senha precisa ter pelo menos 4 caracteres.');
@@ -740,12 +759,14 @@ function LoginScreen({ onLogin }) {
       name: f.name.trim(), apelido: acct === 'grupo' ? '' : f.apelido.trim(), phone: f.phone.trim(), login,
       passHash: simpleHash(f.pass), q: f.q.trim(), aHash: simpleHash(f.a.trim().toLowerCase()),
       createdAt: Date.now(), removed:false, paused:false,
-      ...(gid ? { isGroup:true, groupId: gid } : {})
+      city: (loc.city||'').trim(), associacao: (loc.associacao||'').trim(), distrito: (loc.distrito||'').trim(), igreja: (loc.igreja||'').trim(),
+      ...(gid ? { isGroup:true, groupId: gid } : {}),
+      ...(acct === 'diretor' ? { roles:['diretor'], naoCanta:true } : acct === 'anciao' ? { roles:['anciao'], naoCanta:true } : {})
     });
     if (r.taken) { setBusy(false); return setErr('Esse usuário já existe. Escolha outro.'); }
     if (r.error) { setBusy(false); return setErr('Não consegui criar a conta agora. Tente de novo em instantes; se continuar, fale com o Paulo.'); }
     if (gid) {
-      await Store.set('grupos', gid, { name: f.name.trim(), tipo: gTipo, color: CORES[activeGrupos(st).length % CORES.length], logo:'', members:[], leader:null, account: login, phone: f.phone.trim(), createdBy: login, createdAt: Date.now(), removed:false });
+      await Store.set('grupos', gid, { name: f.name.trim(), tipo: gTipo, color: CORES[activeGrupos(st).length % CORES.length], logo:'', members:[], leader:null, account: login, phone: f.phone.trim(), city: (loc.city||'').trim(), associacao: (loc.associacao||'').trim(), distrito: (loc.distrito||'').trim(), igreja: (loc.igreja||'').trim(), createdBy: login, createdAt: Date.now(), removed:false });
       Store.log('grupo', f.name.trim(), 'criou a conta do grupo');
     } else Store.log('cadastro', f.name.trim());
     setBusy(false);
@@ -777,13 +798,21 @@ function LoginScreen({ onLogin }) {
           ` : html`
             <form onSubmit=${doRegister} style=${{display:'grid', gap:'10px'}}>
               <div class="seg">
-                <button type="button" class=${acct==='cantor'?'on':''} onClick=${() => setAcct('cantor')}>🎙️ Sou cantor(a)</button>
-                <button type="button" class=${acct==='grupo'?'on':''} onClick=${() => setAcct('grupo')}>🎤 Conta de grupo</button>
+                <button type="button" class=${acct==='cantor'?'on':''} onClick=${() => setAcct('cantor')}>🎙️ Cantor(a)</button>
+                <button type="button" class=${acct==='grupo'?'on':''} onClick=${() => setAcct('grupo')}>🎤 Grupo</button>
               </div>
+              <div class="seg">
+                <button type="button" class=${acct==='diretor'?'on':''} onClick=${() => setAcct('diretor')}>🎼 Diretor(a) de música</button>
+                <button type="button" class=${acct==='anciao'?'on':''} onClick=${() => setAcct('anciao')}>📖 Ancião</button>
+              </div>
+              ${acct === 'diretor' && html`<div class="dim">Conta para diretores de música: encontre cantores e grupos de todos os lugares e chame para as escalas da sua igreja.</div>`}
+              ${acct === 'anciao' && html`<div class="dim">Conta para anciãos que fazem a escala de pregação: encontre e cadastre pregadores com contato.</div>`}
               ${acct === 'grupo' && html`<div class="dim">Primeiro crie a conta do grupo. Depois, dentro dela, você adiciona os integrantes (cada um com a conta de cantor dele).</div>`}
               <div class="lbl">${acct === 'grupo' ? 'Dados do grupo' : 'Seus dados'}</div>
               <input class="inp" placeholder=${acct === 'grupo' ? 'Nome do grupo' : 'Nome (como os grupos te conhecem)'} value=${f.name} onInput=${up('name')} autoFocus />
               ${acct !== 'grupo' && html`<input class="inp" placeholder="Como você gostaria de ser chamado(a)?" value=${f.apelido} onInput=${up('apelido')} />`}
+              <div class="lbl">${acct === 'grupo' ? 'De onde é o grupo' : 'De onde você é'}</div>
+              <${LocFields} value=${loc} onChange=${setLoc} />
               ${acct === 'grupo' && html`<div class="chips" style=${{flexWrap:'wrap'}}>${TIPOS.map(t => html`<button type="button" key=${t} class=${'chip ' + (gTipo===t?'on':'')} onClick=${() => setGTipo(t)}>${t}</button>`)}</div>`}
               <input class="inp" placeholder=${acct === 'grupo' ? 'WhatsApp do responsável (com DDD)' : 'WhatsApp (com DDD)'} inputmode="tel" value=${f.phone} onInput=${up('phone')} />
               <div class="lbl">Acesso</div>
@@ -792,7 +821,7 @@ function LoginScreen({ onLogin }) {
               <div class="lbl">Pra recuperar a senha</div>
               <input class="inp" placeholder="Pergunta (ex: nome da minha primeira igreja)" value=${f.q} onInput=${up('q')} />
               <input class="inp" placeholder="Resposta" value=${f.a} onInput=${up('a')} />
-              <button class="btn" type="submit" disabled=${busy}>${busy ? 'Criando…' : acct === 'grupo' ? 'Criar conta do grupo' : 'Criar minha conta'}</button>
+              <button class="btn" type="submit" disabled=${busy}>${busy ? 'Criando…' : acct === 'grupo' ? 'Criar conta do grupo' : acct === 'diretor' ? 'Criar conta de diretor(a)' : acct === 'anciao' ? 'Criar conta de ancião' : 'Criar minha conta'}</button>
             </form>
           `}
         </div>
@@ -1190,15 +1219,75 @@ function ObsThread({ ev, me, canWrite }) {
   };
   if (!list.length && !canWrite) return null;
   return html`<div style=${{marginTop:'10px', borderTop:'1px solid var(--border-soft)', paddingTop:'8px', display:'grid', gap:'6px'}}>
-    <div class="lbl" style=${{margin:0}}>💬 Observações${list.length ? ' (' + list.length + ')' : ''}</div>
+    <div class="lbl" style=${{margin:0}}>🔒 Conversa dos integrantes${list.length ? ' (' + list.length + ')' : ''} <span class="dim" style=${{textTransform:'none', fontWeight:600}}>· só vocês veem</span></div>
     ${list.map((o, i) => html`<div key=${i} style=${{padding:'7px 10px', borderRadius:'10px', background: o.by === me ? 'rgba(139,92,246,.16)' : 'rgba(148,163,184,.08)'}}>
       <div style=${{fontSize:'13.5px'}}>${o.text}</div>
       <div class="dim" style=${{fontSize:'11px', marginTop:'2px'}}>${o.by === me ? 'Você' : cantorName(st, o.by)} · ${fmtAt(o.at)}</div>
     </div>`)}
     ${canWrite && html`<div class="row" style=${{gap:'6px'}}>
-      <input class="inp" style=${{padding:'9px 11px', fontSize:'14px'}} placeholder="Escrever observação…" value=${txt} onInput=${e => setTxt(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') send(); }} />
+      <input class="inp" style=${{padding:'9px 11px', fontSize:'14px'}} placeholder="Mensagem pros integrantes…" value=${txt} onInput=${e => setTxt(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') send(); }} />
       <button class="btn2" style=${{whiteSpace:'nowrap'}} disabled=${!txt.trim()} onClick=${send}>Enviar</button>
     </div>`}
+  </div>`;
+}
+
+// Conversa com a igreja (a igreja escreve pelo link do pedido; os integrantes respondem aqui).
+const pedidoLink = (id) => location.origin + location.pathname + '?pedido=' + encodeURIComponent(id);
+function ChurchChat({ ev, me, asChurch }) {
+  const st = useStore();
+  const [txt, setTxt] = useState('');
+  const list = (ev.chatIgreja || []).slice().sort((a,b) => (a.at||0) - (b.at||0));
+  const fmtAt = (t) => { const d = new Date(t); return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const who = (m) => m.by === '__igreja__' ? '⛪ ' + (ev.church?.contact || ev.church?.name || 'Igreja') : '🎤 ' + (m.by && st.cantores[m.by] ? callName(st, m.by) : 'Grupo');
+  const mine = (m) => asChurch ? m.by === '__igreja__' : m.by !== '__igreja__';
+  const send = async () => {
+    const t = txt.trim(); if (!t) return; setTxt('');
+    await Store.addMsg(ev.id, 'chatIgreja', { by: asChurch ? '__igreja__' : me, text: t, at: Date.now() });
+    toast('Mensagem enviada 💬');
+  };
+  return html`<div style=${{marginTop:'10px', padding:'10px', borderRadius:'12px', background:'rgba(34,211,238,.08)', border:'1px solid rgba(34,211,238,.35)', display:'grid', gap:'6px'}}>
+    <div class="lbl" style=${{margin:0, color:'#67e8f9'}}>💬 Conversa ${asChurch ? 'com o grupo' : 'com a igreja'}${list.length ? ' (' + list.length + ')' : ''}</div>
+    ${!list.length && html`<div class="dim">${asChurch ? 'Escreva aqui sua mensagem. A resposta aparece nesta página.' : 'Ainda sem mensagens. O que vocês escreverem aqui a igreja vê no link do pedido.'}</div>`}
+    ${list.map((m, i) => html`<div key=${i} style=${{padding:'7px 10px', borderRadius:'10px', background: mine(m) ? 'rgba(34,211,238,.18)' : 'rgba(148,163,184,.1)', marginLeft: mine(m) ? '24px' : 0, marginRight: mine(m) ? 0 : '24px'}}>
+      <div style=${{fontSize:'13.5px', whiteSpace:'pre-wrap'}}>${m.text}</div>
+      <div class="dim" style=${{fontSize:'11px', marginTop:'2px'}}>${who(m)} · ${fmtAt(m.at)}</div>
+    </div>`)}
+    <div class="row" style=${{gap:'6px'}}>
+      <input class="inp" style=${{padding:'9px 11px', fontSize:'14px'}} placeholder=${asChurch ? 'Mensagem para o grupo…' : 'Mensagem para a igreja…'} value=${txt} onInput=${e => setTxt(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter') send(); }} />
+      <button class="btn2" style=${{whiteSpace:'nowrap'}} disabled=${!txt.trim()} onClick=${send}>Enviar</button>
+    </div>
+    ${!asChurch && html`<button class="link" style=${{justifySelf:'start'}} onClick=${() => copyText(pedidoLink(ev.id), 'Link do pedido copiado — mande pra igreja 🔗')}>🔗 Copiar link do pedido (pra igreja acompanhar)</button>`}
+  </div>`;
+}
+
+// Página do pedido para a igreja: status + conversa.
+function PublicPedido({ id }) {
+  const st = useStore();
+  const status = useStatus();
+  const [msg, setMsg] = useState(''); const tRef = useRef();
+  toastFn = (m) => { setMsg(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setMsg(''), 2600); };
+  const ev = st.eventos[id];
+  if (!ev) return html`<div class="app"><${Brand} sub=" " /><div class="glass card muted" style=${{textAlign:'center'}}>${status === 'conectando' ? '🔄 Carregando pedido…' : 'Pedido não encontrado.'}</div></div>`;
+  const g = ev.ownerType === 'grupo' ? st.grupos[ev.ownerId] : soloTarget(st, ev.ownerId);
+  const stLabel = ev.status === 'recusado' ? ['❌ Não vai ser possível', '#fca5a5'] : ev.status === 'confirmado' ? ['🔵 Confirmado!', '#93c5fd'] : ['🟡 Aguardando confirmação', '#fcd34d'];
+  return html`<div class="app">
+    <div style=${{textAlign:'center', margin:'6px 0 14px'}}>
+      <div style=${{display:'flex', justifyContent:'center', marginBottom:'8px'}}><${Avatar} name=${g?.name || '?'} color=${g?.color} img=${g?.logo} size=${64} /></div>
+      <div style=${{fontWeight:900, fontSize:'20px'}}>${g?.name || 'Agenda Musical'}</div>
+      <div class="muted">Seu pedido de apresentação</div>
+    </div>
+    <div class="glass card" style=${{display:'grid', gap:'8px'}}>
+      <div style=${{fontWeight:900, fontSize:'17px', color: stLabel[1]}}>${stLabel[0]}</div>
+      <div>📅 <b>${fmtDateLong(ev.date)}</b> · ${(PER[ev.period]||PER.dia).label}${ev.time ? ' · ' + ev.time : ''}</div>
+      <div>⛪ ${ev.church?.name || ''}</div>
+      ${(ev.parts || []).length > 0 && html`<div class="chips" style=${{flexWrap:'wrap'}}>${ev.parts.map(p => html`<span key=${p} class="chip on" style=${{cursor:'default'}}>${p}</span>`)}</div>`}
+      ${ev.church?.cost ? html`<div class="okbox">🚗 Deslocamento estimado: <b>${brl(ev.church.cost)}</b></div>` : null}
+      <${ChurchChat} ev=${ev} asChurch=${true} />
+      <div class="dim">Guarde este link para acompanhar o pedido e conversar com ${g?.__solo ? 'o cantor' : 'o grupo'}.</div>
+      <button class="btn2" onClick=${() => copyText(location.href, 'Link copiado 🔗')}>🔗 Copiar este link</button>
+    </div>
+    <div class="dim" style=${{textAlign:'center', marginTop:'16px'}}>🎶 Agenda Musical</div>
+    <${Toast} msg=${msg} />
   </div>`;
 }
 
@@ -1290,6 +1379,7 @@ function DaySheet({ me, ctx, date, readOnly, onClose, onNew, onEdit }) {
               <button class="btn2" style=${{flex:1}} onClick=${() => onEdit(ev)}>✏️ Editar</button>
               <button class="btn2 btn-red" style=${{flex:1}} onClick=${() => del(ev)}>🗑️ Excluir</button>`}
           </div>`}
+          ${ev.source === 'igreja' && (parts.includes(me) || canTouch(ev)) && html`<${ChurchChat} ev=${ev} me=${me} />`}
           ${ev.kind !== 'bloqueio' && html`<${ObsThread} ev=${ev} me=${me} canWrite=${!!me && (parts.includes(me) || canTouch(ev))} />`}
         </div>`;
       })}
@@ -1348,6 +1438,88 @@ const DRAFT_KEY = 'am_draft_ev';
 const readDraft = () => { try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return d && Date.now() - (d.at || 0) < 3 * 86400000 ? d : null; } catch(e) { return null; } };
 const writeDraft = (d) => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, at: Date.now() })); } catch(e) {} };
 const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch(e) {} };
+
+// ---------- DIRETÓRIO (diretores de música → cantores; anciãos → pregadores) ----------
+function ContactForm({ me, kind, edit, onClose }) {
+  const [f, setF] = useState(edit || { name:'', phone:'', tipo: kind === 'cantores' ? 'Solo' : 'Pregador', vozes:[], obs:'' });
+  const [err, setErr] = useState('');
+  const save = async () => {
+    if (!f.name.trim()) return setErr('Digite o nome.');
+    if (onlyDigits(f.phone).length < 10) return setErr('Digite o WhatsApp com DDD.');
+    const id = edit?.id || ('ct-' + uid('c'));
+    const data = { ...f, id, name: f.name.trim(), phone: f.phone.trim(), isContact:true, contactKind: kind, createdBy: edit?.createdBy || me, createdAt: edit?.createdAt || Date.now(), removed:false };
+    await Store.set('cantores', id, data);
+    toast(edit ? 'Contato atualizado ✅' : 'Cadastrado ✅'); onClose();
+  };
+  return html`<${Sheet} title=${edit ? 'Editar contato' : (kind === 'cantores' ? '➕ Cadastrar cantor / grupo' : '➕ Cadastrar pregador')} onClose=${onClose}>
+    <div style=${{display:'grid', gap:'10px'}}>
+      ${err && html`<div class="err">${err}</div>`}
+      <input class="inp" placeholder="Nome" value=${f.name} onInput=${e => setF({ ...f, name: e.target.value })} />
+      <input class="inp" inputmode="tel" placeholder="WhatsApp (com DDD)" value=${f.phone} onInput=${e => setF({ ...f, phone: e.target.value })} />
+      ${kind === 'cantores' && html`<div class="lbl">Tipo</div>
+        <div class="chips" style=${{flexWrap:'wrap'}}>${['Solo','Dupla','Trio','Quarteto','Grupo','Coral','Instrumentista'].map(t => html`<button key=${t} class=${'chip ' + (f.tipo===t?'on':'')} onClick=${() => setF({ ...f, tipo:t })}>${t}</button>`)}</div>
+        <div class="lbl">Voz</div>
+        <div class="chips" style=${{flexWrap:'wrap'}}>${['Soprano','Contralto','Tenor','Barítono','Baixo'].map(v => { const on = (f.vozes||[]).includes(v); return html`<button key=${v} class=${'chip ' + (on?'on':'')} onClick=${() => setF({ ...f, vozes: on ? f.vozes.filter(x => x !== v) : [...(f.vozes||[]), v] })}>${on ? '✅ ' : ''}${v}</button>`; })}</div>`}
+      <${LocFields} value=${f} onChange=${(v) => setF({ ...f, ...v })} />
+      <textarea class="inp" rows="2" placeholder="Observação (temas, estilo, disponibilidade…)" value=${f.obs || ''} onInput=${e => setF({ ...f, obs: e.target.value })}></textarea>
+      <button class="btn" onClick=${save}>${edit ? 'Salvar' : 'Cadastrar'}</button>
+    </div>
+  </${Sheet}>`;
+}
+
+function DirectoryView({ me, kind }) {
+  const st = useStore();
+  const [q, setQ] = useState(''); const [fl, setFl] = useState({}); const [tipo, setTipo] = useState('todos');
+  const [add, setAdd] = useState(false); const [edit, setEdit] = useState(null);
+  const myName = callName(st, me); const myChurch = st.cantores[me]?.igreja || '';
+  const entries = useMemo(() => {
+    const out = [];
+    if (kind === 'cantores') {
+      activeCantores(st).forEach(c => out.push({ key:c.id, name:c.name, tipo:'Cantor(a)', vozes:c.vozes || [], phone:c.phone, src:c, app:true, link: soloLink(c.id) }));
+      activeGrupos(st).forEach(g => { const lead = g.account ? st.cantores[g.account] : st.cantores[g.leader]; out.push({ key:g.id, name:g.name, tipo:g.tipo || 'Grupo', vozes:[], phone: g.phone || lead?.phone || '', src:g, app:true, grupo:true, link: bookingLink(g.id) }); });
+    } else {
+      Object.values(st.cantores).filter(c => !c.removed && !c.isContact && !c.isGroup && (c.roles || []).includes('pregador')).forEach(c => out.push({ key:c.id, name:c.name, tipo:'Pregador', phone:c.phone, src:c, app:true }));
+    }
+    Object.values(st.cantores).filter(c => c.isContact && !c.removed && c.contactKind === kind).forEach(c => out.push({ key:c.id, name:c.name, tipo:c.tipo || (kind === 'cantores' ? 'Cantor(a)' : 'Pregador'), vozes:c.vozes || [], phone:c.phone, src:c, contact:true }));
+    return out.sort((a,b) => (a.name||'').localeCompare(b.name||'', 'pt-BR'));
+  }, [st, kind]);
+  const opts = (k) => [...new Set(entries.map(e => (e.src[k] || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+  const ql = normLogin(q);
+  const list = entries.filter(e => (!ql || normLogin(e.name + ' ' + locLine(e.src) + ' ' + (e.vozes||[]).join(' ')).includes(ql))
+    && LOC_KEYS.every(([k]) => !fl[k] || (e.src[k] || '').trim() === fl[k])
+    && (tipo === 'todos' || (tipo === 'grupos' ? e.grupo || /dupla|trio|quarteto|grupo|coral/i.test(e.tipo) : !(e.grupo || /dupla|trio|quarteto|grupo|coral/i.test(e.tipo)))));
+  const waMsg = (e) => kind === 'cantores'
+    ? 'Olá ' + (e.name || '').split(' ')[0] + '! Aqui é ' + myName + (myChurch ? ', diretor(a) de música da ' + myChurch : ', diretor(a) de música') + '. Gostaria de te convidar para cantar na nossa igreja. Você tem disponibilidade?'
+    : 'Olá ' + (e.name || '').split(' ')[0] + '! Aqui é ' + myName + (myChurch ? ', ancião da ' + myChurch : '') + '. Gostaria de te convidar para pregar na nossa igreja. Você tem disponibilidade?';
+  return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
+    <div class="glass card" style=${{display:'grid', gap:'10px'}}>
+      <div style=${{fontWeight:900, fontSize:'18px'}}>${kind === 'cantores' ? '🎼 Cantores e grupos' : '📖 Pregadores'}</div>
+      <div class="dim">${kind === 'cantores' ? 'Cantores e grupos de todos os lugares, para chamar para as escalas da sua igreja.' : 'Pregadores de todos os lugares, para montar a escala de pregação.'}</div>
+      <input class="inp" placeholder="🔎 Buscar por nome, voz, cidade…" value=${q} onInput=${e => setQ(e.target.value)} />
+      ${kind === 'cantores' && html`<div class="seg">${[['todos','Todos'],['solo','Solo / cantores'],['grupos','Grupos']].map(([k, lb]) => html`<button key=${k} class=${tipo===k?'on':''} onClick=${() => setTipo(k)}>${lb}</button>`)}</div>`}
+      <div style=${{display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:'8px'}}>${LOC_KEYS.map(([k, lb]) => html`<select key=${k} class="inp" value=${fl[k] || ''} onChange=${e => setFl({ ...fl, [k]: e.target.value })}><option value="">${lb}: todas</option>${opts(k).map(o => html`<option key=${o} value=${o}>${o}</option>`)}</select>`)}</div>
+      <button class="btn" onClick=${() => setAdd(true)}>${kind === 'cantores' ? '➕ Cadastrar cantor / grupo' : '➕ Cadastrar pregador'}</button>
+    </div>
+    <div class="dim">${list.length} encontrado${list.length === 1 ? '' : 's'}</div>
+    <div class="list">${list.map(e => { const wa = waLink(e.phone, waMsg(e)); return html`<div key=${e.key} class="item" style=${{display:'grid', gap:'6px', alignItems:'stretch'}}>
+      <div class="row" style=${{gap:'10px', alignItems:'center'}}>
+        <${Avatar} name=${e.name} color=${e.src.color} img=${e.src.logo || e.src.photo} size=${40} />
+        <div style=${{flex:1, minWidth:0}}>
+          <div style=${{fontWeight:800}}>${e.name} ${e.app ? html`<span class="dim" style=${{fontSize:'11px'}}>· no app</span>` : ''}</div>
+          <div class="dim">${e.tipo}${(e.vozes||[]).length ? ' · ' + e.vozes.join(', ') : ''}</div>
+          ${locLine(e.src) && html`<div class="dim" style=${{fontSize:'12px'}}>📍 ${locLine(e.src)}</div>`}
+          ${e.src.obs && html`<div class="dim" style=${{fontSize:'12px'}}>📝 ${e.src.obs}</div>`}
+        </div>
+      </div>
+      <div class="row" style=${{gap:'6px', flexWrap:'wrap'}}>
+        ${wa ? html`<a class="btn2" style=${{textDecoration:'none', flex:'1 1 120px', textAlign:'center', background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} href=${wa} target="_blank">💬 WhatsApp</a>` : html`<span class="dim">sem telefone</span>`}
+        ${e.link && html`<a class="btn2" style=${{textDecoration:'none', flex:'1 1 120px', textAlign:'center'}} href=${e.link} target="_blank">📅 Ver agenda / convidar</a>`}
+        ${e.contact && e.src.createdBy === me && html`<button class="btn2" onClick=${() => setEdit(e.src)}>✏️</button><button class="btn2 btn-red" onClick=${async () => { if (confirm('Apagar ' + e.name + ' da lista?')) await Store.update('cantores', e.src.id, { removed:true }); }}>🗑️</button>`}
+      </div>
+    </div>`; })}</div>
+    ${(add || edit) && html`<${ContactForm} me=${me} kind=${kind} edit=${edit} onClose=${() => { setAdd(false); setEdit(null); }} />`}
+  </div>`;
+}
 
 // ---------- CONVITE COM MENSAGEM PERSONALIZADA ----------
 // Quem convida escreve a mensagem que a pessoa vai ler; o link do app vai junto no final.
@@ -2014,6 +2186,7 @@ function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
       ${g && html`<button class="btn2" onClick=${() => setEdit(true)}>✏️ Editar nome, tipo, logo e cor</button>`}
       <div class="lbl">WhatsApp do responsável</div>
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
+      ${g && html`<div class="lbl">De onde é o grupo</div><${LocFields} value=${g} onChange=${(v) => Store.update('grupos', g.id, { city: v.city || '', associacao: v.associacao || '', distrito: v.distrito || '', igreja: v.igreja || '' })} />`}
     </div>
     ${g && html`<div class="glass card"><div style=${{fontWeight:900, fontSize:'16px', marginBottom:'10px'}}>👥 Integrantes e funções</div><${GroupPanel} me=${me} g=${g} onClose=${() => {}} onEdit=${() => setEdit(true)} onAgenda=${onAgenda} /></div>`}
     <div class="glass card" style=${{display:'grid', gap:'10px'}}>
@@ -2182,6 +2355,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
   const [phone, setPhone] = useState(c.phone || '');
   const [np, setNp] = useState('');
   const [city, setCity] = useState(c.city || '');
+  const [loc2, setLoc2] = useState({ associacao: c.associacao || '', distrito: c.distrito || '', igreja: c.igreja || '' });
   const [apelido, setApelido] = useState(c.apelido || '');
   const [bio, setBio] = useState(c.bio || '');
   const [q, setQ] = useState(c.q || ''); const [a, setA] = useState('');
@@ -2189,10 +2363,12 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   // Salva sozinho: 0,8s depois de parar de digitar.
   useEffect(() => {
-    if (name === (c.name||'') && phone === (c.phone||'') && city === (c.city||'') && bio === (c.bio||'') && apelido === (c.apelido||'')) return;
-    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim(), city: city.trim(), bio: bio.trim(), apelido: apelido.trim() }); toast('Salvo ✅'); } }, 800);
+    if (name === (c.name||'') && phone === (c.phone||'') && city === (c.city||'') && bio === (c.bio||'') && apelido === (c.apelido||'') && loc2.associacao === (c.associacao||'') && loc2.distrito === (c.distrito||'') && loc2.igreja === (c.igreja||'')) return;
+    const t = setTimeout(() => { if (name.trim()) { Store.update('cantores', me, { name: name.trim(), phone: phone.trim(), city: city.trim(), bio: bio.trim(), apelido: apelido.trim(), associacao: loc2.associacao.trim(), distrito: loc2.distrito.trim(), igreja: loc2.igreja.trim() }); toast('Salvo ✅'); } }, 800);
     return () => clearTimeout(t);
-  }, [name, phone, city, bio, apelido]);
+  }, [name, phone, city, bio, apelido, loc2]);
+  const roles = c.roles || [];
+  const toggleRole = (r) => Store.update('cantores', me, { roles: roles.includes(r) ? roles.filter(x => x !== r) : [...roles, r] });
   const vozes = c.vozes || [];
   const toggleVoz = (v) => { const n = vozes.includes(v) ? vozes.filter(x => x !== v) : [...vozes, v]; Store.update('cantores', me, { vozes: n }); };
   return html`<div class="fade-up" style=${{display:'grid', gap:'12px'}}>
@@ -2208,6 +2384,20 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
       <div class="lbl">Cidade</div>
       <input class="inp" placeholder="Ex: Timbó - SC" value=${city} onInput=${e => setCity(e.target.value)} />
+      <div class="lbl">Associação</div>
+      <input class="inp" placeholder="Ex: Associação Catarinense" value=${loc2.associacao} onInput=${e => setLoc2({ ...loc2, associacao: e.target.value })} />
+      <div class="lbl">Distrito</div>
+      <input class="inp" placeholder="Ex: Distrito de Timbó" value=${loc2.distrito} onInput=${e => setLoc2({ ...loc2, distrito: e.target.value })} />
+      <div class="lbl">Igreja</div>
+      <input class="inp" placeholder="Ex: IASD Central de Timbó" value=${loc2.igreja} onInput=${e => setLoc2({ ...loc2, igreja: e.target.value })} />
+      <div class="lbl">Funções na igreja</div>
+      <div class="chips" style=${{flexWrap:'wrap'}}>
+        <button class=${'chip ' + (!c.naoCanta ? 'on' : '')} onClick=${() => Store.update('cantores', me, { naoCanta: !c.naoCanta })}>${!c.naoCanta ? '✅ ' : ''}🎙️ Eu canto</button>
+        <button class=${'chip ' + (roles.includes('pregador') ? 'on' : '')} onClick=${() => toggleRole('pregador')}>${roles.includes('pregador') ? '✅ ' : ''}🙏 Sou pregador</button>
+        <button class=${'chip ' + (roles.includes('diretor') ? 'on' : '')} onClick=${() => toggleRole('diretor')}>${roles.includes('diretor') ? '✅ ' : ''}🎼 Diretor(a) de música</button>
+        <button class=${'chip ' + (roles.includes('anciao') ? 'on' : '')} onClick=${() => toggleRole('anciao')}>${roles.includes('anciao') ? '✅ ' : ''}📖 Ancião (escala de pregação)</button>
+      </div>
+      <div class="dim">Diretor(a) ganha a aba 🎼 Cantores; ancião ganha a aba 📖 Pregadores. “Sou pregador” coloca você na lista dos anciãos.</div>
       <div class="lbl">Sua voz / naipe (os kits dela aparecem primeiro nos ensaios)</div>
       <div class="chips" style=${{flexWrap:'wrap'}}>${['Soprano','Contralto','Tenor','Barítono','Baixo','Instrumentista'].map(v => html`<button key=${v} class=${'chip ' + (vozes.includes(v) ? 'on' : '')} onClick=${() => toggleVoz(v)}>${vozes.includes(v) ? '✅ ' : ''}${v}</button>`)}</div>
       <div class="lbl">Sobre você</div>
@@ -2223,8 +2413,8 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
       <input class="inp" placeholder="Nova resposta" value=${a} onInput=${e => setA(e.target.value)} />
       <button class="btn2" disabled=${!q.trim() || !a.trim()} onClick=${async () => { await Store.update('cantores', me, { q: q.trim(), aHash: simpleHash(a.trim().toLowerCase()) }); setA(''); toast('Pergunta de segurança salva ✅'); }}>Salvar pergunta e resposta</button>
     </div>
-    <div class="lbl" style=${{marginTop:'4px'}}>🎤 Seus grupos, link solo e convites</div>
-    <${GroupsView} me=${me} openAgenda=${openAgenda} />
+    ${!c.naoCanta && html`<div class="lbl" style=${{marginTop:'4px'}}>🎤 Seus grupos, link solo e convites</div>
+    <${GroupsView} me=${me} openAgenda=${openAgenda} />`}
     <${MessagesCard} me=${me} />
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
@@ -2233,7 +2423,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
         : isIOS ? html`<div class="muted">No iPhone: toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</div>`
         : html`<div class="muted">No Android: toque nos <b>3 pontinhos</b> do navegador → <b>Instalar app</b> (ou "Adicionar à tela inicial").</div>`}
     </div>`}
-    <${BecomeGroupCard} me=${me} onDone=${onBecomeGroup} />
+    ${!c.naoCanta && html`<${BecomeGroupCard} me=${me} onDone=${onBecomeGroup} />`}
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
     <div class="dim" style=${{textAlign:'center'}}>Agenda Musical · v${APP_VERSION}</div>
   </div>`;
@@ -2400,6 +2590,9 @@ function PublicBooking({ gid, solo }) {
       <div style=${{fontWeight:900, fontSize:'18px'}}>Pedido enviado!</div>
       <div class="muted">${g.__solo ? '' : 'O '}${g.name} recebeu seu pedido para <b>${fmtDateLong(done.date)}</b> (${PER[done.period].label}). ${g.__solo ? g.name.split(' ')[0] + ' vai confirmar' : 'Eles vão confirmar'} com você${done.church.phone ? ' pelo WhatsApp' : ''}.</div>
       ${done.church.km ? html`<div class="okbox">🚗 ${done.church.km.toFixed(0)} km · deslocamento estimado: <b>${brl(done.church.cost)}</b></div>` : null}
+      <div class="warnbox" style=${{textAlign:'left'}}>📌 <b>Guarde o link do seu pedido</b> para acompanhar e <b>conversar</b> com ${g.__solo ? 'o cantor' : 'o grupo'}:</div>
+      <a class="btn" style=${{textDecoration:'none', textAlign:'center'}} href=${pedidoLink(done.id)}>💬 Abrir meu pedido e conversar</a>
+      <button class="btn2" onClick=${() => copyText(pedidoLink(done.id), 'Link do pedido copiado 🔗')}>🔗 Copiar link do pedido</button>
       <button class="btn2" onClick=${() => setDone(null)}>Fazer outro pedido</button>
     </div>
   </div>`;
@@ -2468,6 +2661,7 @@ function BookingForm({ g, date, onClose, onDone }) {
       church: { name: f.name.trim(), contact: f.contact.trim(), phone: f.phone.trim(), address: f.address.trim(),
         km: q ? Math.round(q.km * 10) / 10 : 0, cost: q ? Math.round(q.total * 100) / 100 : 0 },
     };
+    if (f.notes.trim()) ev.chatIgreja = [{ by:'__igreja__', text: f.notes.trim(), at: Date.now() }];
     const ok = await Store.set('eventos', id, ev);
     setBusy(false);
     if (!ok) return setErr('Não consegui enviar agora. Tente de novo em instantes.');
@@ -2491,7 +2685,7 @@ function BookingForm({ g, date, onClose, onDone }) {
       <div class="lbl">Quem está agendando</div>
       <input class="inp" placeholder="Seu nome" value=${f.contact} onInput=${up('contact')} />
       <input class="inp" inputmode="tel" placeholder="WhatsApp com DDD" value=${f.phone} onInput=${up('phone')} />
-      <textarea class="inp" rows="2" placeholder="Observação (programa, música desejada…)" value=${f.notes} onInput=${up('notes')}></textarea>
+      <textarea class="inp" rows="2" placeholder="💬 Mensagem para o grupo (programa, música desejada, dúvidas…)" value=${f.notes} onInput=${up('notes')}></textarea>
       ${hasCost && html`<div class="glass card" style=${{padding:'12px', display:'grid', gap:'6px'}}>
         <div style=${{fontWeight:800}}>🚗 Deslocamento</div>
         ${!quote && html`<div class="row" style=${{gap:'6px'}}><div class="dim" style=${{flex:1}}>Informe o endereço para calcular.</div><button class="btn2" disabled=${!f.address.trim()} onClick=${calc}>Calcular</button></div>`}
@@ -2523,6 +2717,7 @@ async function notify(title, body) {
 function avisoText(st, a) {
   if (a.kind === 'resp') return ['💡 Resposta à sua sugestão', a.sug.reply];
   if (a.kind === 'pedido') return ['⛪ Novo pedido: ' + a.g.name, (a.ev.church?.name || 'Uma igreja') + ' quer agendar em ' + fmtDate(a.ev.date) + ' (' + (PER[a.ev.period]?.label || '') + ')' + ((a.ev.parts || []).length ? ' · ' + a.ev.parts.map(p => p.replace(/^\S+\s/, '')).join(', ') : '')];
+  if (a.kind === 'igrejaMsg') return ['⛪ ' + (a.ev.church?.name || 'Igreja') + ' escreveu', a.obs.text];
   if (a.kind === 'obs') return ['💬 ' + cantorName(st, a.obs.by) + (a.g ? ' · ' + a.g.name : ''), a.obs.text];
   if (a.kind === 'novo' && isEnsaio(a.ev)) return ['🎼 ' + a.g.name + ': ' + (a.ev.extra ? '⭐ ensaio extra' : a.ev.seriesId ? 'ensaios marcados' : 'novo ensaio'), (a.ev.extra ? '' : 'A partir de ') + fmtDateLong(a.ev.date) + (a.ev.focus ? ' · foco: ' + a.ev.focus : '') + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
   if (a.kind === 'novo') return ['📅 ' + a.g.name + ': nova apresentação', fmtDateLong(a.ev.date) + ' — marcado por ' + cantorName(st, a.ev.createdBy)];
@@ -2608,8 +2803,14 @@ function App() {
     ? [['dev','🔑','Painel'], ['todos','🌐','Todos']]
     : session.group
     ? [['agenda','📅','Agenda'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','⚙️','Configurações']]
-    : [['agenda','📅','Agenda'], ['avisos','🔔','Avisos'], ['sug','💡','Sugestões'], ['perfil','⚙️','Configurações']];
+    : [
+        ...(st.cantores[me]?.naoCanta ? [] : [['agenda','📅','Agenda']]),
+        ...(hasRole(st, me, 'diretor') ? [['dir','🎼','Cantores']] : []),
+        ...(hasRole(st, me, 'anciao') ? [['anc','📖','Pregadores']] : []),
+        ...(st.cantores[me]?.naoCanta ? [] : [['avisos','🔔','Avisos']]),
+        ['sug','💡','Sugestões'], ['perfil','⚙️','Configurações']];
   const title = session.dev ? 'Desenvolvedor' : callName(st, me);
+  if (!session.dev && !tabs.some(t => t[0] === tab)) setTimeout(() => setTab(tabs[0][0]), 0);
 
   return html`
     <div class="app">
@@ -2631,6 +2832,8 @@ function App() {
       ${tab === 'avisos' && html`<${AvisosView} me=${me} avisos=${avisos} openDay=${(a) => a.kind === 'resp' ? setTab('sug') : setAvisoDay(a)} />`}
       ${tab === 'perfil' && (session.group ? html`<${GroupProfile} me=${me} onLogout=${logout} installPrompt=${installPrompt} onAgenda=${() => setTab('agenda')} />` : html`<${ProfileView} me=${me} onLogout=${logout} installPrompt=${installPrompt} openAgenda=${(c) => { setCtx(c); setTab('agenda'); }} onBecomeGroup=${(gid) => { const s2 = { login: me, group: gid }; try { (localStorage.getItem(SESSION_KEY) ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify(s2)); } catch(e) {} setSession(s2); setCtx({ type:'grupo', id: gid }); setTab('perfil'); }} />`)}
       ${tab === 'sug' && html`<${SuggestionsView} me=${me} />`}
+      ${tab === 'dir' && html`<${DirectoryView} me=${me} kind="cantores" />`}
+      ${tab === 'anc' && html`<${DirectoryView} me=${me} kind="pregadores" />`}
       ${tab === 'dev' && html`<${DevView} />`}
 
       ${avisoDay && html`<${DaySheet} me=${me}
@@ -2650,7 +2853,7 @@ function App() {
 
 // Link público das igrejas (?agendar=ID) abre só a página de agendamento, sem login.
 const QS = new URLSearchParams(location.search);
-const AGENDAR_ID = QS.get('agendar'), SOLO_ID = QS.get('solo');
+const AGENDAR_ID = QS.get('agendar'), SOLO_ID = QS.get('solo'), PEDIDO_ID = QS.get('pedido');
 // ⚡ Efeitos elétricos: faíscas no fundo, relâmpagos e explosão de faíscas no toque.
 (function () {
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -2690,7 +2893,8 @@ const AGENDAR_ID = QS.get('agendar'), SOLO_ID = QS.get('solo');
 })();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />`
+  PEDIDO_ID ? html`<${PublicPedido} id=${PEDIDO_ID} />`
+  : AGENDAR_ID ? html`<${PublicBooking} gid=${AGENDAR_ID} />`
   : SOLO_ID ? html`<${PublicBooking} gid=${SOLO_ID} solo=${true} />`
   : html`<${App} />`);
 
