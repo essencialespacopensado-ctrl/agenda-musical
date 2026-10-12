@@ -165,7 +165,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.17';
+const APP_VERSION = '2026-10-11.18';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -261,8 +261,14 @@ async function shareLink(title, text, url) {
   }
   window.open('https://wa.me/?text=' + encodeURIComponent(text + '\n' + url), '_blank');
 }
-const shareGroup = (g) => shareLink(g.name + ' — agenda', 'Agende uma apresentação do ' + g.name + ' na sua igreja. Veja as datas livres e o custo do deslocamento:', bookingLink(g.id));
-const shareSolo = (name, login) => shareLink(name + ' — agenda', 'Convide ' + name + ' para cantar na sua igreja. Veja as datas livres e o custo do deslocamento:', soloLink(login));
+// Mensagens padrão (cada um pode editar e salvar a sua em Configurações → ✉️ Mensagens padrão).
+const defChurchGroup = (g) => 'Agende uma apresentação do ' + g.name + ' na sua igreja. Veja as datas livres e o custo do deslocamento:';
+const defChurchSolo = (name) => 'Convide ' + name + ' para cantar na sua igreja. Veja as datas livres e o custo do deslocamento:';
+const defInvite = (myName, group) => group
+  ? 'Olá! Aqui é ' + myName + '. Quero te convidar pra fazer parte do ' + group.name + ' na Agenda Musical. Baixe o app, crie sua conta e me avise o seu usuário que eu te adiciono no grupo. 🎶'
+  : 'Olá! Aqui é ' + myName + '. Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos. 🎶';
+const shareGroup = (g) => shareLink(g.name + ' — agenda', (g.churchMsg || '').trim() || defChurchGroup(g), bookingLink(g.id));
+const shareSolo = (name, login, msg) => shareLink(name + ' — agenda', (msg || '').trim() || defChurchSolo(name), soloLink(login));
 const appLink = () => location.origin + location.pathname;
 async function copyText(text, okMsg) {
   try { await navigator.clipboard.writeText(text); toast(okMsg); } catch(e) { prompt('Copie o link:', text); }
@@ -1261,11 +1267,11 @@ const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch(e) 
 // Quem convida escreve a mensagem que a pessoa vai ler; o link do app vai junto no final.
 function InviteSheet({ me, group, onClose }) {
   const st = useStore();
-  const myName = (cantorName(st, me) || '').split(' ')[0];
-  const def = group
-    ? 'Olá! Aqui é ' + myName + '. Quero te convidar pra fazer parte do ' + group.name + ' na Agenda Musical. Baixe o app, crie sua conta e me avise o seu usuário que eu te adiciono no grupo. 🎶'
-    : 'Olá! Aqui é ' + myName + '. Baixe a Agenda Musical e crie sua conta pra gente organizar as apresentações juntos. 🎶';
+  const myName = callName(st, me);
+  const saved = group ? (st.grupos[group.id]?.inviteMsg || '') : (st.cantores[me]?.inviteMsg || '');
+  const def = saved.trim() || defInvite(myName, group);
   const [txt, setTxt] = useState(def);
+  const saveDef = async () => { const t = txt.trim(); if (group) await Store.update('grupos', group.id, { inviteMsg: t }); else await Store.update('cantores', me, { inviteMsg: t }); toast('💾 Salva como sua mensagem padrão'); };
   const send = () => { const t = txt.trim() || def; shareLink(group ? 'Convite — ' + group.name : 'Agenda Musical', t, appLink()); onClose(); };
   return html`<${Sheet} title=${group ? '📤 Convidar para ' + group.name : '📤 Convidar cantores'} onClose=${onClose}>
     <div style=${{display:'grid', gap:'10px'}}>
@@ -1273,7 +1279,8 @@ function InviteSheet({ me, group, onClose }) {
       <textarea class="inp" rows="6" value=${txt} onInput=${e => setTxt(e.target.value)}></textarea>
       <div class="dim">O link pra baixar o app vai junto, no final da mensagem.</div>
       <div class="row" style=${{gap:'6px'}}>
-        <button class="btn2" onClick=${() => setTxt(def)}>↺ Mensagem padrão</button>
+        <button class="btn2" onClick=${() => setTxt(def)}>↺ Voltar</button>
+        <button class="btn2" onClick=${saveDef}>💾 Salvar como padrão</button>
         <button class="btn" style=${{flex:1}} onClick=${send}>📤 Enviar convite</button>
       </div>
     </div>
@@ -1615,7 +1622,7 @@ function SoloCard({ me }) {
     <div class="dim">${t.cost?.valorKm ? 'Saída: ' + (t.cost.origem || '—') + ' · ' + brl(t.cost.valorKm) + '/km' + (t.cost.idaVolta === false ? ' (só ida)' : ' (ida e volta)') : 'Configure seus custos de deslocamento pra igreja já ver o valor ao te convidar.'}</div>
     <div class="row" style=${{gap:'6px'}}>
       <button class="btn2" style=${{flex:1}} onClick=${() => setCosts(true)}>💰 Custos</button>
-      <button class="btn2" style=${{flex:1, background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareSolo(t.name, me)}>📤 Compartilhar</button>
+      <button class="btn2" style=${{flex:1, background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareSolo(t.name, me, st.cantores[me]?.churchMsg)}>📤 Compartilhar</button>
       <button class="btn2" title="Copiar link" onClick=${() => copyText(soloLink(me), 'Seu link solo foi copiado! 🔗')}>🔗</button>
       <a class="btn2" title="Ver como a igreja vê" style=${{textDecoration:'none', textAlign:'center'}} href=${soloLink(me)} target="_blank">👁️</a>
     </div>
@@ -1815,6 +1822,38 @@ function GroupAcctForm({ g, me, onClose }) {
   </${Sheet}>`;
 }
 
+// Editar as mensagens padrão (convite e texto que vai junto do link das igrejas).
+function MsgField({ label, value, def, onSave }) {
+  const [v, setV] = useState(value || def);
+  useEffect(() => { setV(value || def); }, [value]);
+  return html`<div style=${{display:'grid', gap:'6px'}}>
+    <div class="lbl">${label}</div>
+    <textarea class="inp" rows="4" value=${v} onInput=${e => setV(e.target.value)}></textarea>
+    <div class="row" style=${{gap:'6px'}}>
+      <button class="btn2" style=${{flex:1}} onClick=${() => { onSave(v.trim() === def ? '' : v.trim()); toast('💾 Mensagem salva'); }}>💾 Salvar</button>
+      <button class="btn2" onClick=${() => { setV(def); onSave(''); toast('Voltou para a mensagem original'); }}>↺ Original</button>
+    </div>
+  </div>`;
+}
+function MessagesCard({ me }) {
+  const st = useStore();
+  const c = st.cantores[me] || {};
+  const myName = callName(st, me);
+  const isAcct = !!c.isGroup; const gAcct = isAcct ? st.grupos[c.groupId] : null;
+  const leaderOf = isAcct ? (gAcct ? [gAcct] : []) : myGroups(st, me).filter(g => g.leader === me || g.account === me);
+  return html`<div class="glass card" style=${{display:'grid', gap:'14px'}}>
+    <div style=${{fontWeight:900, fontSize:'16px'}}>✉️ Mensagens padrão</div>
+    <div class="dim">Edite os textos que vão nos convites e junto do link das igrejas. O link é colocado sozinho no final.</div>
+    ${!isAcct && html`<${MsgField} label="📤 Convite para cantores baixarem o app" value=${c.inviteMsg} def=${defInvite(myName, null)} onSave=${v => Store.update('cantores', me, { inviteMsg: v })} />`}
+    ${!isAcct && html`<${MsgField} label="⛪ Mensagem do seu link solo (para igrejas)" value=${c.churchMsg} def=${defChurchSolo(c.name || myName)} onSave=${v => Store.update('cantores', me, { churchMsg: v })} />`}
+    ${leaderOf.map(g => html`<div key=${g.id} style=${{display:'grid', gap:'14px', paddingTop:'6px', borderTop:'1px solid rgba(148,163,184,.15)'}}>
+      <div style=${{fontWeight:800, color: g.color || '#a78bfa'}}>🎤 ${g.name}</div>
+      <${MsgField} label="📤 Convite para entrar no grupo" value=${g.inviteMsg} def=${defInvite(isAcct ? g.name : myName, g)} onSave=${v => Store.update('grupos', g.id, { inviteMsg: v })} />
+      <${MsgField} label="⛪ Mensagem do link do grupo (para igrejas)" value=${g.churchMsg} def=${defChurchGroup(g)} onSave=${v => Store.update('grupos', g.id, { churchMsg: v })} />
+    </div>`)}
+  </div>`;
+}
+
 // Conta de cantor que na verdade é de um grupo → vira conta de grupo.
 // Os compromissos "solo" dela passam a ser do grupo, e o link antigo (?solo=) continua funcionando.
 async function convertToGroup(st, me, tipo) {
@@ -1864,6 +1903,7 @@ function GroupProfile({ me, onLogout, installPrompt, onAgenda }) {
       <${PasswordInput} value=${np} onChange=${setNp} placeholder="Nova senha" />
       <button class="btn2" disabled=${np.length < 4} onClick=${async () => { await Store.update('cantores', me, { passHash: simpleHash(np) }); setNp(''); toast('Senha trocada ✅'); }}>Salvar nova senha</button>
     </div>
+    <${MessagesCard} me=${me} />
     <${NotifyCard} />
     ${installPrompt && html`<button class="btn" onClick=${() => installPrompt.prompt()}>📲 Instalar Agenda Musical</button>`}
     <button class="btn2 btn-red" onClick=${onLogout}>Sair da conta</button>
@@ -2067,6 +2107,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
     </div>
     <div class="lbl" style=${{marginTop:'4px'}}>🎤 Seus grupos, link solo e convites</div>
     <${GroupsView} me=${me} openAgenda=${openAgenda} />
+    <${MessagesCard} me=${me} />
     <${NotifyCard} />
     ${!standalone && html`<div class="glass card" style=${{display:'grid', gap:'8px'}}>
       <div style=${{fontWeight:800}}>📲 Instalar no celular</div>
