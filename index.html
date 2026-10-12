@@ -201,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-12.04';
+const APP_VERSION = '2026-10-12.05';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -647,7 +647,8 @@ function InstallHelp({ onClose }) {
       ${inApp && html`<div class="warnbox">Você abriu dentro de outro app (WhatsApp/Instagram). Toque nos <b>3 pontinhos</b> ou no ícone de navegador e escolha <b>Abrir no ${ios ? 'Safari' : 'Chrome'}</b>. Depois siga os passos abaixo.</div>`}
       ${ios ? html`
         ${iosOther && html`<div class="warnbox">No iPhone, a instalação funciona melhor pelo <b>Safari</b>. Copie o endereço e abra no Safari.</div>`}
-        <div class="muted"><b>1.</b> Toque no botão <b>Compartilhar</b> <span style=${{fontSize:'18px'}}>⬆️</span> (quadrado com seta, embaixo ou no topo da tela).</div>
+        <div class="muted"><b>1.</b> Na barra do Safari (embaixo), toque em <b>Compartilhar</b> <span style=${{fontSize:'18px'}}>⬆️</span>. Se não aparecer, toque primeiro nos <b>⋯</b> (3 pontinhos) e depois em <b>Compartilhar</b>.</div>
+        <div class="dim">Feche esta janela antes, tocando em <b>Entendi</b>.</div>
         <div class="muted"><b>2.</b> Role a lista e toque em <b>Adicionar à Tela de Início</b> ➕.</div>
         <div class="muted"><b>3.</b> Toque em <b>Adicionar</b>. O ícone 🎶 Super Agenda aparece junto dos seus apps.</div>`
       : html`
