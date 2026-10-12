@@ -201,7 +201,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-12.02';
+const APP_VERSION = '2026-10-12.03';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -436,6 +436,16 @@ function useStatus() {
 
 // ---------- regras da agenda ----------
 const activeCantores = (st) => Object.values(st.cantores).filter(c => !c.removed && !c.isGroup && !c.isContact && !c.naoCanta);
+// Categoria da conta: o mesmo e-mail pode ter uma conta em cada categoria.
+const CAT_LABEL = { cantor:'🎙️ Cantor(a)', grupo:'🎤 Grupo', diretor:'🎼 Diretor(a) de música', anciao:'📖 Ancião' };
+const catOf = (c) => !c ? '' : c.isGroup ? 'grupo' : (c.roles||[]).includes('diretor') ? 'diretor' : (c.roles||[]).includes('anciao') ? 'anciao' : 'cantor';
+const normEmail = (s) => (s||'').trim().toLowerCase();
+const validEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+// Contas que batem com o que a pessoa digitou: usuário, nome completo ou e-mail.
+const findAccounts = (st, typed) => {
+  const u = normLogin(typed), em = normEmail(typed);
+  return Object.values(st.cantores).filter(x => x && !x.removed && !x.isContact && (x.id === u || normLogin(x.name) === u || (em.includes('@') && normEmail(x.email) === em)));
+};
 const hasRole = (st, login, r) => ((st.cantores[login]?.roles) || []).includes(r);
 // Cidade / Associação / Distrito / Igreja
 const LOC_KEYS = [['city','Cidade','Ex: Timbó - SC'],['associacao','Associação','Ex: Associação Catarinense'],['distrito','Distrito','Ex: Distrito de Timbó'],['igreja','Igreja','Ex: IASD Central de Timbó']];
@@ -720,7 +730,8 @@ function LoginScreen({ onLogin }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
-  const [f, setF] = useState({ name:'', apelido:'', phone:'', login:'', pass:'', q:'', a:'' });
+  const [pick, setPick] = useState(null);
+  const [f, setF] = useState({ name:'', apelido:'', phone:'', email:'', login:'', pass:'', q:'', a:'' });
   const [acct, setAcct] = useState(() => { try { const v = localStorage.getItem('am_reg_group'); if (v) { localStorage.removeItem('am_reg_group'); return 'grupo'; } } catch(e) {} return 'cantor'; });
   const [gTipo, setGTipo] = useState('Quarteto');
   const [loc, setLoc] = useState({});
@@ -736,33 +747,50 @@ function LoginScreen({ onLogin }) {
       if (pass === DEV.password) { onLogin({ dev:true }, remember); return; }
       setErr('Usuário ou senha incorretos.'); return;
     }
-    // Aceita o usuário ou o nome completo digitado.
-    const c = (st.cantores[u] && !st.cantores[u].isContact ? st.cantores[u] : null) || Object.values(st.cantores).find(x => !x.removed && !x.isContact && normLogin(x.name) === u);
-    if (!c || c.removed || c.passHash !== simpleHash(pass)) { setErr('Usuário ou senha incorretos.'); return; }
-    if (c.paused) { setErr('Seu acesso está pausado. Fale com o Paulo.'); return; }
+    // Aceita o usuário, o nome completo ou o e-mail. Se o e-mail tiver mais de uma conta, pergunta qual.
+    const ok = findAccounts(st, who).filter(x => x.passHash === simpleHash(pass));
+    if (!ok.length) { setErr('Usuário ou senha incorretos.'); return; }
+    if (ok.length > 1) { setPick(ok); return; }
+    enter(ok[0]);
+  };
+  const enter = (c) => {
+    if (c.paused) { setPick(null); setErr('Seu acesso está pausado. Fale com o Paulo.'); return; }
     Store.log('login', c.name);
     onLogin(c.isGroup ? { login: c.id, group: c.groupId } : { login: c.id }, remember);
   };
 
   const doRegister = async (e) => {
     e.preventDefault(); setErr('');
-    const login = normLogin(f.login || f.name);
+    const email = normEmail(f.email);
+    const typedLogin = !!f.login.trim();
+    let login = normLogin(f.login || (email ? email.split('@')[0] : '') || f.name);
+    if (email && !validEmail(email)) return setErr('Esse e-mail não parece certo. Confira, por favor.');
+    if (email) {
+      const same = Object.values(st.cantores).find(x => x && !x.removed && !x.isContact && normEmail(x.email) === email && catOf(x) === acct);
+      if (same) return setErr('Já existe uma conta de ' + CAT_LABEL[acct] + ' com esse e-mail. Entre com ela, ou escolha outra categoria.');
+    }
     if (!f.name.trim()) return setErr(acct === 'grupo' ? 'Digite o nome do grupo.' : 'Digite seu nome.');
     if ((acct === 'diretor' || acct === 'anciao') && !(loc.igreja || '').trim() && !(loc.city || '').trim()) return setErr('Informe pelo menos a cidade ou a igreja.');
     if (!login || login.length < 3) return setErr('Escolha um usuário com pelo menos 3 letras.');
+    if (login === DEV.login && !typedLogin) login = login + '.' + acct;
     if (login === DEV.login) return setErr('Esse usuário é reservado. Escolha outro.');
     if (f.pass.length < 4) return setErr('A senha precisa ter pelo menos 4 caracteres.');
     if (!f.q.trim() || !f.a.trim()) return setErr('Preencha a pergunta e a resposta de segurança (servem pra recuperar a senha).');
     setBusy(true);
     const gid = acct === 'grupo' ? uid('gr') : null;
-    const r = await Store.createCantor(login, {
-      name: f.name.trim(), apelido: acct === 'grupo' ? '' : f.apelido.trim(), phone: f.phone.trim(), login,
+    const mk = (lg) => ({
+      name: f.name.trim(), apelido: acct === 'grupo' ? '' : f.apelido.trim(), phone: f.phone.trim(), login: lg, email,
       passHash: simpleHash(f.pass), q: f.q.trim(), aHash: simpleHash(f.a.trim().toLowerCase()),
       createdAt: Date.now(), removed:false, paused:false,
       city: (loc.city||'').trim(), associacao: (loc.associacao||'').trim(), distrito: (loc.distrito||'').trim(), igreja: (loc.igreja||'').trim(),
       ...(gid ? { isGroup:true, groupId: gid } : {}),
       ...(acct === 'diretor' ? { roles:['diretor'], naoCanta:true } : acct === 'anciao' ? { roles:['anciao'], naoCanta:true } : {})
     });
+    let r = await Store.createCantor(login, mk(login));
+    // Mesmo e-mail em outra categoria: o usuário interno ganha a categoria no final (ex.: paulo.anciao).
+    if (r.taken && !typedLogin) {
+      for (let i = 0; i < 6 && r.taken; i++) { const alt = login + '.' + acct + (i ? i + 1 : ''); r = await Store.createCantor(alt, mk(alt)); if (!r.taken) login = alt; }
+    }
     if (r.taken) { setBusy(false); return setErr('Esse usuário já existe. Escolha outro.'); }
     if (r.error) { setBusy(false); return setErr('Não consegui criar a conta agora. Tente de novo em instantes; se continuar, fale com o Paulo.'); }
     if (gid) {
@@ -785,7 +813,7 @@ function LoginScreen({ onLogin }) {
           ${err && html`<div class="err">${err}</div>`}
           ${mode === 'login' ? html`
             <form onSubmit=${doLogin} style=${{display:'grid', gap:'10px'}}>
-              <input class="inp" placeholder="Seu usuário" autocapitalize="off" autocomplete="username" value=${who} onInput=${e => setWho(e.target.value)} />
+              <input class="inp" placeholder="Usuário ou e-mail" autocapitalize="off" autocomplete="username" value=${who} onInput=${e => setWho(e.target.value)} />
               <${PasswordInput} value=${pass} onChange=${setPass} />
               <label class="row muted" style=${{gap:'8px'}}>
                 <input type="checkbox" checked=${remember} onChange=${e => setRemember(e.target.checked)} style=${{width:'18px', height:'18px'}} />
@@ -816,7 +844,9 @@ function LoginScreen({ onLogin }) {
               ${acct === 'grupo' && html`<div class="chips" style=${{flexWrap:'wrap'}}>${TIPOS.map(t => html`<button type="button" key=${t} class=${'chip ' + (gTipo===t?'on':'')} onClick=${() => setGTipo(t)}>${t}</button>`)}</div>`}
               <input class="inp" placeholder=${acct === 'grupo' ? 'WhatsApp do responsável (com DDD)' : 'WhatsApp (com DDD)'} inputmode="tel" value=${f.phone} onInput=${up('phone')} />
               <div class="lbl">Acesso</div>
-              <input class="inp" placeholder=${'Usuário' + (f.name ? ' (ex: ' + normLogin(f.name) + ')' : '')} value=${f.login} onInput=${up('login')} autocapitalize="off" />
+              <input class="inp" type="email" placeholder="E-mail" value=${f.email} onInput=${up('email')} autocapitalize="off" autocomplete="email" inputmode="email" />
+              <div class="dim">Pode usar o mesmo e-mail em contas de categorias diferentes (ex.: Cantor e Ancião). Na hora de entrar, você escolhe qual.</div>
+              <input class="inp" placeholder=${'Usuário (opcional)' + (f.name || f.email ? ' — ex: ' + normLogin(f.email ? f.email.split('@')[0] : f.name) : '')} value=${f.login} onInput=${up('login')} autocapitalize="off" />
               <${PasswordInput} value=${f.pass} onChange=${v => setF(o => ({ ...o, pass:v }))} placeholder="Senha (mínimo 4)" />
               <div class="lbl">Pra recuperar a senha</div>
               <input class="inp" placeholder="Pergunta (ex: nome da minha primeira igreja)" value=${f.q} onInput=${up('q')} />
@@ -828,6 +858,13 @@ function LoginScreen({ onLogin }) {
         <div class="dim" style=${{textAlign:'center', marginTop:'14px'}}>v${APP_VERSION}</div>
       </div>
       ${forgot && html`<${ForgotSheet} onClose=${() => setForgot(false)} preset=${who} />`}
+      ${pick && html`<${Sheet} title="Entrar como…" onClose=${() => setPick(null)}>
+        <div style=${{display:'grid', gap:'10px'}}>
+          <div class="muted">Esse e-mail tem mais de uma conta. Qual você quer abrir agora?</div>
+          ${pick.map(c => html`<button key=${c.id} class="btn2 acct-pick" style=${{justifyContent:'flex-start', textAlign:'left'}} onClick=${() => enter(c)}>
+            <span style=${{display:'grid'}}><b>${CAT_LABEL[catOf(c)]}</b><span class="dim">${c.name} · ${c.id}</span></span></button>`)}
+        </div>
+      </${Sheet}>`}
     </div>`;
 }
 
@@ -838,8 +875,9 @@ function ForgotSheet({ onClose, preset }) {
   const [np, setNp] = useState('');
   const [err, setErr] = useState('');
   const [ok, setOk] = useState(false);
-  const u = normLogin(who);
-  const c = (st.cantores[u] && !st.cantores[u].removed) ? st.cantores[u] : null;
+  const [sel, setSel] = useState('');
+  const matches = findAccounts(st, who);
+  const c = matches.length === 1 ? matches[0] : (matches.find(x => x.id === sel) || null);
   const go = async () => {
     setErr('');
     if (!c) return setErr('Usuário não encontrado.');
@@ -854,8 +892,9 @@ function ForgotSheet({ onClose, preset }) {
       <button class="btn" style=${{marginTop:'12px'}} onClick=${onClose}>Voltar pro login</button>` : html`
     <div style=${{display:'grid', gap:'10px'}}>
       ${err && html`<div class="err">${err}</div>`}
-      <input class="inp" placeholder="Seu usuário" autocapitalize="off" value=${who} onInput=${e => setWho(e.target.value)} />
-      ${who.trim() && !c && html`<div class="dim">Digite o usuário exatamente como cadastrou.</div>`}
+      <input class="inp" placeholder="Usuário ou e-mail" autocapitalize="off" value=${who} onInput=${e => { setWho(e.target.value); setSel(''); }} />
+      ${who.trim() && !matches.length && html`<div class="dim">Digite o usuário ou o e-mail exatamente como cadastrou.</div>`}
+      ${matches.length > 1 && html`<div class="chips" style=${{flexWrap:'wrap'}}>${matches.map(x => html`<button type="button" key=${x.id} class=${'chip ' + (sel===x.id?'on':'')} onClick=${() => setSel(x.id)}>${CAT_LABEL[catOf(x)]}</button>`)}</div>`}
       ${c && html`
         <div class="muted"><b>Pergunta:</b> ${c.q}</div>
         <input class="inp" placeholder="Sua resposta" value=${a} onInput=${e => setA(e.target.value)} />
@@ -2358,6 +2397,7 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
   const [loc2, setLoc2] = useState({ associacao: c.associacao || '', distrito: c.distrito || '', igreja: c.igreja || '' });
   const [apelido, setApelido] = useState(c.apelido || '');
   const [bio, setBio] = useState(c.bio || '');
+  const [email, setEmail] = useState(c.email || '');
   const [q, setQ] = useState(c.q || ''); const [a, setA] = useState('');
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
@@ -2382,6 +2422,18 @@ function ProfileView({ me, onLogout, installPrompt, openAgenda, onBecomeGroup })
       <input class="inp" placeholder=${'Ex: ' + ((name || '').split(' ')[0] || 'Paulinho')} value=${apelido} onInput=${e => setApelido(e.target.value)} />
       <div class="lbl">WhatsApp</div>
       <input class="inp" inputmode="tel" value=${phone} onInput=${e => setPhone(e.target.value)} />
+      <div class="lbl">E-mail (pra entrar e usar em outras categorias de conta)</div>
+      <div class="actions-row" style=${{display:'flex', gap:'8px'}}>
+        <input class="inp" type="email" inputmode="email" autocapitalize="off" placeholder="seu@email.com" value=${email} onInput=${e => setEmail(e.target.value)} style=${{flex:1, minWidth:0}} />
+        ${normEmail(email) !== normEmail(c.email) && html`<button class="btn2" onClick=${() => {
+          const em = normEmail(email);
+          if (em && !validEmail(em)) return toast('E-mail inválido');
+          const same = em && Object.values(st.cantores).find(x => x && x.id !== me && !x.removed && !x.isContact && normEmail(x.email) === em && catOf(x) === catOf(c));
+          if (same) return toast('Já existe outra conta de ' + CAT_LABEL[catOf(c)] + ' com esse e-mail');
+          Store.update('cantores', me, { email: em }); toast('E-mail salvo ✅');
+        }}>Salvar</button>`}
+      </div>
+      ${(() => { const others = c.email ? Object.values(st.cantores).filter(x => x && x.id !== me && !x.removed && !x.isContact && normEmail(x.email) === normEmail(c.email)) : []; return others.length ? html`<div class="dim">Outras contas com esse e-mail: ${others.map(x => CAT_LABEL[catOf(x)]).join(', ')}. Pra trocar, saia e entre pelo e-mail.</div>` : null; })()}
       <div class="lbl">Cidade</div>
       <input class="inp" placeholder="Ex: Timbó - SC" value=${city} onInput=${e => setCity(e.target.value)} />
       <div class="lbl">Associação</div>
