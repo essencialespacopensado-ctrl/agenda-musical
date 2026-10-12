@@ -23,7 +23,7 @@
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; padding:0; }
   body { background:var(--bg-page); color:var(--text-hi); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif; min-height:100vh; }
-  body::before { content:""; position:fixed; inset:0; z-index:-1;
+  body::before { content:""; position:fixed; top:0; right:0; bottom:0; left:0; z-index:-1;
     background:
       radial-gradient(900px 480px at 0% -8%, rgba(236,72,153,0.20), transparent 60%),
       radial-gradient(900px 480px at 105% 5%, rgba(139,92,246,0.20), transparent 60%),
@@ -86,7 +86,18 @@
   .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
   .cal-head button { width:42px; height:42px; border-radius:14px; border:1px solid rgba(6,182,212,.5); background:linear-gradient(135deg,rgba(6,182,212,.25),rgba(139,92,246,.25)); color:#fff; font-size:20px; font-weight:900; box-shadow:0 0 14px -4px rgba(6,182,212,.8); }
   .cal-head .mtitle { background:linear-gradient(90deg,#f472b6,#a78bfa,#22d3ee) !important; -webkit-background-clip:text !important; background-clip:text !important; color:transparent !important; letter-spacing:.5px; text-transform:uppercase; font-size:16px !important; box-shadow:none !important; border:none !important; }
-  .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
+  .sheet { overflow-x:hidden; }
+  .sheet div, .card div, .glass div { min-width:0; }
+  .seg > button { min-width:0; overflow-wrap:anywhere; }
+  .inp { max-width:100%; min-width:0; }
+  .actions-row { display:flex; flex-wrap:wrap; gap:8px; }
+  .actions-row button { white-space:nowrap; }
+  .row { min-width:0; }
+  .chips { max-width:100%; }
+  html, body { overflow-x:hidden; max-width:100%; -webkit-text-size-adjust:100%; }
+  @media (max-width:360px) { .nav-in button { font-size:9.5px; } .nav-in button .ic { font-size:19px; } .btn, .btn2 { font-size:14px; } .day { font-size:12.5px; } .app { padding-left:10px; padding-right:10px; } }
+  @supports not (aspect-ratio: 1) { .day { height:46px; } }
+  .cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; }
   .dow { text-align:center; font-size:11px; font-weight:900; padding:2px 0 6px; letter-spacing:1px; color:#a78bfa; }
   .dow:first-child, .dow:nth-child(7) { color:#f472b6; }
   .day { aspect-ratio:1/1.05; border-radius:12px; border:1px solid rgba(148,163,184,.16); background:linear-gradient(160deg,rgba(30,41,59,.85),rgba(15,23,42,.85)); color:#e2e8f0; font-size:14px; font-weight:800; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:5px 0 0; gap:3px; position:relative; transition:transform .12s, box-shadow .2s; }
@@ -110,7 +121,7 @@
   .legend span { display:flex; align-items:center; gap:5px; }
   .sq { width:12px; height:12px; border-radius:4px; display:inline-block; }
 
-  .sheet-bg { position:fixed; inset:0; background:rgba(2,6,23,.6); z-index:40; display:flex; align-items:flex-end; justify-content:center; }
+  .sheet-bg { position:fixed; top:0; right:0; bottom:0; left:0; background:rgba(2,6,23,.6); z-index:40; display:flex; align-items:flex-end; justify-content:center; }
   .sheet { width:100%; max-width:560px; max-height:88vh; overflow-y:auto; border-radius:22px 22px 0 0; padding:16px 16px calc(env(safe-area-inset-bottom) + 18px); animation:fadeUp .25s ease both; }
   .sheet-grip { width:44px; height:5px; border-radius:9px; background:var(--border-soft); margin:0 auto 12px; }
   .ev { border-radius:14px; padding:12px; border:1px solid var(--border-soft); background:rgba(148,163,184,.06); border-left:5px solid var(--mine); }
@@ -165,7 +176,7 @@
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-const APP_VERSION = '2026-10-11.18';
+const APP_VERSION = '2026-10-11.19';
 const DEV = { login:'paulo', password:'221844', name:'Paulo' };
 const COL = { cantores:'agenda_cantores', grupos:'agenda_grupos', eventos:'agenda_eventos', log:'agenda_log' };
 const CACHE_KEY = 'am_cache_v1';
@@ -832,7 +843,8 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
   const st = useStore();
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [day, setDay] = useState(null);
-  const [form, setForm] = useState(() => { const d = readDraft(); return d && d.me === me && !d.editId ? { ctx, date: d.date, ensaio: d.tipo === 'ensaio', bloqueio: !!d.bloqueio } : null; });
+  const [form, setForm] = useState(() => { const d = readDraft(); const typed = d && ((d.repert || []).length || (d.focus || '').trim() || (d.place || '').trim() || (d.notes || '').trim() || (d.manual || []).length);
+    return d && typed && d.me === me && !d.editId ? { ctx, date: d.date, ensaio: d.tipo === 'ensaio', bloqueio: !!d.bloqueio } : null; });
   const groups = me ? myGroups(st, me) : [];
   const g = ctx.type === 'grupo' ? st.grupos[ctx.id] : null;
   const today = todayStr();
@@ -903,10 +915,10 @@ function AgendaView({ me, ctx, setCtx, readOnly, showChips }) {
         </div>`}
       </div>`}
 
-      ${canEditCtx && html`<div class="row">
-        <button class="btn" onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx })}>➕ Agendar apresentação</button>
-        <button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx, ensaio:true })}>🎼 Ensaio</button>
-        ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{whiteSpace:'nowrap'}} onClick=${() => setForm({ date: today, ctx, bloqueio:true })}>🚫 Bloquear dia</button>`}
+      ${canEditCtx && html`<div class="actions-row">
+        <button class="btn" style=${{flex:'1 1 100%'}} onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx })}>➕ Agendar apresentação</button>
+        <button class="btn2" style=${{flex:'1 1 120px'}} onClick=${() => setForm({ date: today >= ymd(month) ? today : ymd(month), ctx, ensaio:true })}>🎼 Ensaio</button>
+        ${ctx.type === 'pessoa' && html`<button class="btn2" style=${{flex:'1 1 120px'}} onClick=${() => setForm({ date: today, ctx, bloqueio:true })}>🚫 Bloquear dia</button>`}
       </div>`}
       ${me && html`<button class="btn2" style=${{background:'rgba(16,185,129,.18)', borderColor:'rgba(16,185,129,.45)'}} onClick=${() => shareAgenda(st, ctx, me)}>📤 Compartilhar agenda (imagem)</button>`}
 
@@ -1011,7 +1023,9 @@ function AgendaBanner({ me, onPick, gid }) {
   const weekEvs = all.filter(e => e.date >= week[0] && e.date <= week[6]);
   const next = mine.filter(e => e.kind !== 'bloqueio' && e.date > week[6]).slice(0, 2);
   const groups = myGroups(st, me).map(g => g.id);
-  const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && groups.includes(e.ownerId)) || (e.ownerType === 'solo' && e.ownerId === me)));
+  const pend = allEvents(st).filter(e => e.date >= today && isChurchPending(e) && ((e.ownerType === 'grupo' && (gid ? e.ownerId === gid : groups.includes(e.ownerId))) || (!gid && e.ownerType === 'solo' && e.ownerId === me)));
+  // Tudo que está "a confirmar" (pedidos das igrejas + marcados como a confirmar), em destaque no topo.
+  const toConfirm = [...new Map([...pend, ...mine.filter(e => e.status === 'pendente')].map(e => [e.id, e])).values()].sort((a,b) => (a.date + (a.time||'')).localeCompare(b.date + (b.time||'')));
   const ym = today.slice(0, 7);
   const thisMonth = mine.filter(e => e.kind !== 'bloqueio' && !isEnsaio(e) && e.date.startsWith(ym)).length;
   const first = gid ? (st.grupos[gid]?.name || callName(st, me)) : callName(st, me);
@@ -1020,13 +1034,24 @@ function AgendaBanner({ me, onPick, gid }) {
     <div class="row" style=${{justifyContent:'space-between', alignItems:'flex-start'}}>
       <div>
         <div style=${{fontWeight:900, fontSize:'18px'}}>Olá, ${first}! 👋</div>
-        <div class="muted">📆 Seus compromissos desta semana</div>
+        <div class="muted">${toConfirm.length ? '🟡 Você tem ' + toConfirm.length + ' compromisso' + (toConfirm.length > 1 ? 's' : '') + ' a confirmar' : '📆 Seus compromissos desta semana'}</div>
       </div>
       <div style=${{textAlign:'right'}}>
         <div style=${{fontWeight:900, fontSize:'22px'}}>${thisMonth}</div>
         <div class="dim" style=${{fontSize:'11px'}}>este mês</div>
       </div>
     </div>
+    ${toConfirm.length > 0 && html`<div style=${{display:'grid', gap:'6px', padding:'10px', borderRadius:'14px', background:'linear-gradient(135deg,rgba(245,158,11,.22),rgba(249,115,22,.14))', border:'1px solid rgba(252,211,77,.55)', boxShadow:'0 0 18px -6px rgba(245,158,11,.8)'}}>
+      <div style=${{fontWeight:900, color:'#fcd34d'}}>🟡 A confirmar</div>
+      ${toConfirm.map(e => { const d = parseYmd(e.date); return html`<button key=${e.id} onClick=${() => onPick(e.date)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border:'none', background:'rgba(2,6,23,.45)', color:'var(--text-hi)'}}>
+        <div style=${{minWidth:'44px', textAlign:'center'}}><div style=${{fontSize:'11px', fontWeight:900, color:'#fcd34d'}}>${DOW3[d.getDay()].toUpperCase()}</div><div style=${{fontWeight:900, fontSize:'17px', lineHeight:1.1}}>${d.getDate()}/${pad(d.getMonth()+1)}</div></div>
+        <div style=${{flex:1, minWidth:0}}>
+          <div style=${{fontWeight:800, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${e.source === 'igreja' ? '⛪ ' + (e.church?.name || 'Igreja') : label(e)}${e.source === 'igreja' && e.ownerType === 'grupo' && !gid ? ' · ' + ownerName(st, e) : ''}</div>
+          <div class="dim" style=${{fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${(e.parts||[]).length ? ' · ' + e.parts.map(p => p.replace(/^\S+\s/, '')).join(', ') : ''}${e.church?.cost ? ' · ' + brl(e.church.cost) : ''}</div>
+        </div>
+        <span style=${{fontSize:'12px', fontWeight:900, color:'#111', background:'#fcd34d', borderRadius:'999px', padding:'4px 8px', whiteSpace:'nowrap'}}>Confirmar ›</span>
+      </button>`; })}
+    </div>`}
     <div style=${{display:'grid', gap:'6px'}}>${!weekEvs.length && html`<div class="okbox" style=${{padding:'8px 10px'}}>🎉 Semana livre — nenhum compromisso de domingo a sábado.</div>`}${week.map((d, i) => { const evs = weekEvs.filter(e => e.date === d); if (!evs.length) return null; const isT = d === today; const past = d < today; return html`<button key=${d} onClick=${() => onPick(d)} style=${{display:'flex', gap:'10px', alignItems:'center', textAlign:'left', padding:'8px 10px', borderRadius:'12px', border: isT ? '1px solid #22d3ee' : '1px solid rgba(255,255,255,.06)', background: isT ? 'linear-gradient(135deg,rgba(34,211,238,.22),rgba(139,92,246,.22))' : evs.length ? 'rgba(2,6,23,.45)' : 'rgba(2,6,23,.22)', color:'var(--text-hi)', opacity: past ? .55 : 1}}>
       <div style=${{minWidth:'44px', textAlign:'center'}}><div style=${{fontSize:'11px', fontWeight:900, color: isT ? '#22d3ee' : (i === 0 || i === 6 ? '#f472b6' : '#a78bfa')}}>${isT ? 'HOJE' : DOW3[i].toUpperCase()}</div><div style=${{fontWeight:900, fontSize:'17px', lineHeight:1.1}}>${parseYmd(d).getDate()}</div></div>
       <div style=${{flex:1, minWidth:0, display:'grid', gap:'3px'}}>
@@ -1045,7 +1070,7 @@ function AgendaBanner({ me, onPick, gid }) {
         <div class="dim" style=${{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>${(PER[e.period]||PER.dia).ic} ${(PER[e.period]||PER.dia).label}${e.time ? ' ' + e.time : ''}${e.place ? ' · ' + e.place : ''}${isEnsaio(e) && e.focus ? ' · 🎯 ' + e.focus : ''}</div>
       </div>
     </button>`; })}
-    ${pend.length > 0 && html`<div class="warnbox" style=${{padding:'8px 10px'}}>⛪ ${pend.length} pedido${pend.length > 1 ? 's' : ''} de igreja esperando confirmação — veja em 🔔 Avisos.</div>`}
+
   </div>`;
 }
 
@@ -1398,7 +1423,7 @@ function RepertoireView({ rep, me }) {
     ${play && html`<${Sheet} title=${'🎧 ' + play.title} onClose=${() => setPlay(null)}>
       <div style=${{display:'grid', gap:'10px'}}>
         <div style=${{position:'relative', paddingTop:'56.25%', borderRadius:'12px', overflow:'hidden', background:'#000'}}>
-          <iframe src=${'https://www.youtube-nocookie.com/embed/' + play.id + '?autoplay=1&rel=0&playsinline=1'} style=${{position:'absolute', inset:0, width:'100%', height:'100%', border:0}} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+          <iframe src=${'https://www.youtube-nocookie.com/embed/' + play.id + '?autoplay=1&rel=0&playsinline=1'} style=${{position:'absolute', top:0, left:0, width:'100%', height:'100%', border:0}} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
         </div>
         <a class="btn2" style=${{textAlign:'center', textDecoration:'none'}} href=${'https://www.youtube.com/watch?v=' + play.id} target="_blank" rel="noopener">Abrir no YouTube</a>
       </div>
@@ -1413,7 +1438,12 @@ function EventForm({ me, init, onClose }) {
   const isBlock = editing ? editing.kind === 'bloqueio' : !!init.bloqueio;
   const groups = myGroups(st, me);
   const defOwner = editing ? (editing.ownerType === 'grupo' ? editing.ownerId : 'solo') : (init.ctx?.type === 'grupo' ? init.ctx.id : (groups[0]?.id || 'solo'));
-  const [dr] = useState(() => { const d = readDraft(); return d && d.me === me && (d.editId || null) === (editing?.id || null) && !!d.bloqueio === isBlock ? d : null; });
+  const [dr] = useState(() => {
+    const d = readDraft();
+    const typed = d && ((d.repert || []).length || (d.focus || '').trim() || (d.place || '').trim() || (d.notes || '').trim() || (d.manual || []).length);
+    const sameKind = d && (editing ? true : (!!init.ensaio === (d.tipo === 'ensaio')));
+    return d && typed && sameKind && d.me === me && (d.editId || null) === (editing?.id || null) && !!d.bloqueio === isBlock ? d : null;
+  });
   const pickD = (k, def) => dr && dr[k] !== undefined ? dr[k] : def;
   const [owner, setOwner] = useState(pickD('owner', defOwner));
   const [date, setDate] = useState(pickD('date', editing?.date || init.date || todayStr()));
